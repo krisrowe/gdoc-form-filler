@@ -1,0 +1,32 @@
+# Credentials - never commit these
+user_token.json
+credentials.json
+client_secrets.json
+*.token.json
+
+# Data files (use *.example for templates)
+*.json
+*.csv
+*.yaml
+!*.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

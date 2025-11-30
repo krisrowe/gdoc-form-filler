@@ -1,0 +1,14 @@
+# gdoc-form-filler configuration
+# Copy this file to config.yaml and fill in your values
+
+# Path to OAuth token file
+token: user_token.json
+
+# Google Doc ID to work with
+doc_id: YOUR_DOCUMENT_ID_HERE
+
+# Path to questions/answers JSON file
+questions_file: answers.json
+
+# Path to CSV file for conversion
+csv_file: answers.csv
