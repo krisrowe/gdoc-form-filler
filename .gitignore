@@ -12,6 +12,9 @@ client_secrets.json
 .test_doc_id
 !*.example
 
+# Output reports
+processed_*.md
+
 # Python
 __pycache__/
 *.py[cod]

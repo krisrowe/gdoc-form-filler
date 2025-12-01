@@ -103,7 +103,16 @@ def load_credentials():
     return creds
 
 
-# Test document structure
+# Test document structure - covers all scenarios:
+# 1. Parent with answer AND children with answers (question 3: "Work Experience")
+# 2. Parent with NO answer but children have answers (question 4: "Contact Information")
+# 3. Top-level question with answer (questions 1, 2, 5)
+# 4. Question that will be skipped (no answer provided in input but in doc)
+#
+# The test input file will include:
+# - A validation_text mismatch to test text_mismatches
+# - A question not in the doc to test missing_in_doc
+# - Some questions not in input to test missing_in_input / not_in_input
 TEST_QUESTIONS = {
     "questions": [
         {
@@ -117,7 +126,18 @@ TEST_QUESTIONS = {
             "answer": "January 1, 1990"
         },
         {
+            # Parent HAS an answer AND children have answers
             "id": "3",
+            "question": "Work Experience",
+            "answer": "10 years total",
+            "questions": [
+                {"id": "a", "question": "Current employer", "answer": "Acme Corp"},
+                {"id": "b", "question": "Job title", "answer": "Senior Developer"}
+            ]
+        },
+        {
+            # Parent has NO answer but children have answers
+            "id": "4",
             "question": "Contact Information",
             "questions": [
                 {"id": "a", "question": "Email address", "answer": "john@example.com"},
@@ -126,12 +146,12 @@ TEST_QUESTIONS = {
             ]
         },
         {
-            "id": "4",
+            "id": "5",
             "question": "Employment status",
             "answer": "Full-time employed"
         },
         {
-            "id": "5",
+            "id": "6",
             "question": "Additional comments",
             "answer": "None"
         }
@@ -529,12 +549,16 @@ def run_tests(docs_service, doc_id: str, outline_mode: str = 'auto') -> dict:
         processing = process_answers(docs_service, doc_id, answers, dry_run=False)
         errors = []
 
-        # Check no processing errors
-        if processing["errors"]:
-            errors.append(f"processing errors: {processing['errors']}")
+        # New unified structure: processing["results"] is the array
+        proc_results = processing.get("results", [])
 
-        # Check answers were inserted (action starts with "inserted", may have "_uncertain" suffix)
-        inserted = [p for p in processing["processed"] if p.get("action", "").startswith("inserted")]
+        # Check for processing errors
+        error_entries = [r for r in proc_results if r.get("status") == "error"]
+        if error_entries:
+            errors.append(f"processing errors: {error_entries}")
+
+        # Check answers were inserted (status starts with "inserted" or "would_insert")
+        inserted = [r for r in proc_results if r.get("status", "").startswith("inserted")]
         expected_answers = [a for a in answers if a.get("answer")]
         if len(inserted) != len(expected_answers):
             errors.append(f"inserted count: expected {len(expected_answers)}, got {len(inserted)}")
@@ -571,6 +595,151 @@ def run_tests(docs_service, doc_id: str, outline_mode: str = 'auto') -> dict:
             results["errors"].extend(errors)
         else:
             logger.info(f"  PASS: {len(inserted)} answers inserted and verified")
+            results["passed"] += 1
+
+    except Exception as e:
+        logger.error(f"  ERROR: {e}")
+        results["failed"] += 1
+        results["errors"].append(str(e))
+
+    # Test 6: Test validation and processing with partial/mismatched input
+    # This tests scenarios: missing_in_doc, missing_in_input, text_mismatches,
+    # replaced, no_change, not_in_input, skipped, would_insert
+    logger.info("Test 6: Testing validation scenarios with partial input...")
+    try:
+        # First, delete one answer from the doc to create a blank slot for would_insert testing
+        # We'll delete question 6's answer ("None") by finding and removing it
+        doc = docs_service.documents().get(documentId=doc_id).execute()
+        content = doc.get("body", {}).get("content", [])
+
+        # Find and delete the answer for question 6 (the "None" text after "Additional comments")
+        for i, elem in enumerate(content):
+            if "paragraph" in elem:
+                para = elem["paragraph"]
+                text = ""
+                for e in para.get("elements", []):
+                    tr = e.get("textRun")
+                    if tr:
+                        text += tr.get("content", "")
+                if text.strip() == "None":
+                    # Found the answer, delete it
+                    start_idx = elem.get("startIndex")
+                    end_idx = elem.get("endIndex")
+                    if start_idx and end_idx:
+                        docs_service.documents().batchUpdate(
+                            documentId=doc_id,
+                            body={"requests": [{
+                                "deleteContentRange": {
+                                    "range": {"startIndex": start_idx, "endIndex": end_idx}
+                                }
+                            }]}
+                        ).execute()
+                        logger.debug(f"  Deleted answer 'None' at {start_idx}-{end_idx} for would_insert test")
+                        break
+
+        # Create partial input that:
+        # - Omits some doc questions (to test missing_in_input / not_in_input)
+        # - Includes a question not in doc (to test missing_in_doc)
+        # - Has a text mismatch (to test text_mismatches)
+        # - Has same answer as already in doc (to test no_change)
+        # - Has different answer (to test would_replace)
+        # - Has no answer for a question (to test skipped)
+        # - Has answer for question with no existing answer (to test would_insert)
+        partial_input = [
+            # Same answer as inserted - should be no_change
+            {"outline_id": "1", "answer": "John Smith"},
+            # Different answer - should be would_replace
+            {"outline_id": "2", "answer": "December 31, 1985"},
+            # Text mismatch - validation_text won't match doc
+            {"outline_id": "3", "validation_text": "Years of Experience", "answer": "Updated experience"},
+            # Question not in doc - should be missing_in_doc / not_found
+            {"outline_id": "99", "validation_text": "Fake question", "answer": "Fake answer"},
+            # No answer provided - should be skipped
+            {"outline_id": "5"},
+            # Answer for blank slot (we deleted it above) - should be would_insert
+            {"outline_id": "6", "answer": "New comment"},
+            # Omit questions 3a, 3b, 4, 4a, 4b, 4c - should be not_in_input
+        ]
+
+        # Run validation
+        validation = validate_questions(docs_service, doc_id, partial_input)
+        errors = []
+
+        # Expected: 1 missing_in_doc (question 99)
+        if len(validation["missing_in_doc"]) != 1:
+            errors.append(f"missing_in_doc: expected 1, got {len(validation['missing_in_doc'])}")
+        elif validation["missing_in_doc"][0]["outline_id"] != "99":
+            errors.append(f"missing_in_doc should be '99', got {validation['missing_in_doc']}")
+
+        # Expected: 6 missing_in_input (3a, 3b, 4, 4a, 4b, 4c) - note: 6 is now in input
+        expected_missing = {"3a", "3b", "4", "4a", "4b", "4c"}
+        actual_missing = {m["outline_id"] for m in validation["missing_in_input"]}
+        if actual_missing != expected_missing:
+            errors.append(f"missing_in_input: expected {expected_missing}, got {actual_missing}")
+
+        # Expected: 1 text_mismatch (question 3 - "Work Experience" vs "Years of Experience")
+        if len(validation["text_mismatches"]) != 1:
+            errors.append(f"text_mismatches: expected 1, got {len(validation['text_mismatches'])}")
+        elif validation["text_mismatches"][0]["outline_id"] != "3":
+            errors.append(f"text_mismatches should be for '3', got {validation['text_mismatches']}")
+
+        # Now run process_answers and check result statuses
+        processing = process_answers(docs_service, doc_id, partial_input, dry_run=True)
+        proc_results = processing.get("results", [])
+
+        # Build status map
+        status_map = {r["outline_id"]: r["status"] for r in proc_results}
+
+        # Check expected statuses
+        # 1 should be no_change (same answer)
+        if status_map.get("1") != "no_change":
+            errors.append(f"question 1: expected no_change, got {status_map.get('1')}")
+
+        # 2 should be would_replace (different answer, dry_run)
+        if status_map.get("2") != "would_replace":
+            errors.append(f"question 2: expected would_replace, got {status_map.get('2')}")
+
+        # 3 should be not_found (validation text mismatch)
+        if status_map.get("3") != "not_found":
+            errors.append(f"question 3: expected not_found, got {status_map.get('3')}")
+
+        # 99 should be not_found (not in doc)
+        if status_map.get("99") != "not_found":
+            errors.append(f"question 99: expected not_found, got {status_map.get('99')}")
+
+        # 5 should be skipped (no answer provided)
+        if status_map.get("5") != "skipped":
+            errors.append(f"question 5: expected skipped, got {status_map.get('5')}")
+
+        # 6 should be would_insert (blank slot, dry_run)
+        if status_map.get("6") != "would_insert":
+            errors.append(f"question 6: expected would_insert, got {status_map.get('6')}")
+
+        # Check not_in_input entries
+        not_in_input = [r for r in proc_results if r["status"] == "not_in_input"]
+        not_in_input_ids = {r["outline_id"] for r in not_in_input}
+        if not_in_input_ids != expected_missing:
+            errors.append(f"not_in_input: expected {expected_missing}, got {not_in_input_ids}")
+
+        # Check that some not_in_input have existing answers (3a, 3b, 4a, 4b, 4c have answers from Test 5)
+        has_answer_count = sum(1 for r in not_in_input if r.get("has_answer"))
+        if has_answer_count < 5:
+            errors.append(f"not_in_input with existing answers: expected at least 5, got {has_answer_count}")
+
+        # Check that 4 (parent without answer) shows has_answer=False
+        q4_entry = next((r for r in not_in_input if r["outline_id"] == "4"), None)
+        if q4_entry and q4_entry.get("has_answer"):
+            errors.append(f"question 4: expected has_answer=False (parent with no answer)")
+
+        if errors:
+            for err in errors:
+                logger.error(f"  FAIL: {err}")
+            results["failed"] += 1
+            results["errors"].extend(errors)
+        else:
+            logger.info("  PASS: All validation scenarios tested correctly")
+            logger.info(f"    missing_in_doc: 1, missing_in_input: {len(expected_missing)}, text_mismatches: 1")
+            logger.info(f"    statuses: no_change=1, would_replace=1, would_insert=1, not_found=2, skipped=1, not_in_input={len(expected_missing)}")
             results["passed"] += 1
 
     except Exception as e:

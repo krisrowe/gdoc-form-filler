@@ -373,7 +373,7 @@ def insert_answer(
         documentId=doc_id,
         body={"requests": requests}
     ).execute()
-    logger.info(f"Inserted answer at index {index}")
+    logger.debug(f"Inserted answer at index {index}")
 
 
 def replace_answer(
@@ -406,7 +406,7 @@ def replace_answer(
         documentId=doc_id,
         body={"requests": requests}
     ).execute()
-    logger.info(f"Replaced answer at index {start}-{end}")
+    logger.debug(f"Replaced answer at index {start}-{end}")
 
 
 def validate_questions(
@@ -493,33 +493,36 @@ def process_answers(
         dry_run: If True, don't make changes, just report what would happen
 
     Returns:
-        Dict with processing results
+        Dict with unified results array. Each entry contains:
+            - outline_id: the question identifier
+            - status: primary outcome (inserted, replaced, no_change, skipped, error, not_found)
+            - actions: list of actions taken (e.g., ["inserted", "fixed_indentation"])
+            - warning: (optional) warning message if detection was uncertain
+            - Additional context fields as needed
     """
-    results = {
-        "processed": [],
-        "skipped": [],
-        "mismatches": [],
-        "errors": []
-    }
+    results = []
 
     for answer_entry in answers:
         outline_id = answer_entry.get("outline_id")
         validation_text = answer_entry.get("validation_text")
         answer_text = answer_entry.get("answer")
 
+        # Build result entry for this question
+        entry = {"outline_id": outline_id}
+
         if not outline_id:
-            results["errors"].append({
-                "entry": answer_entry,
-                "error": "Missing outline_id"
-            })
+            entry["status"] = "error"
+            entry["actions"] = []
+            entry["error"] = "Missing outline_id"
+            results.append(entry)
             continue
 
         # Skip entries without answers (parent questions or incomplete answers)
         if not answer_text:
-            results["skipped"].append({
-                "outline_id": outline_id,
-                "reason": "No answer provided"
-            })
+            entry["status"] = "skipped"
+            entry["actions"] = []
+            entry["reason"] = "No answer provided"
+            results.append(entry)
             continue
 
         # Re-fetch document structure each time (indices change after edits)
@@ -531,10 +534,10 @@ def process_answers(
         )
 
         if not question_para:
-            results["skipped"].append({
-                "outline_id": outline_id,
-                "reason": f"Question not found for outline {outline_id}"
-            })
+            entry["status"] = "not_found"
+            entry["actions"] = []
+            entry["reason"] = f"Question not found in document"
+            results.append(entry)
             continue
 
         # Determine insertion point
@@ -542,56 +545,82 @@ def process_answers(
             paragraphs, question_para
         )
 
+        # Track actions performed
+        actions = []
+
         if existing_answer:
             existing_text = existing_answer["text"].strip()
             new_text = answer_text.strip()
 
             if existing_text == new_text:
-                results["processed"].append({
-                    "outline_id": outline_id,
-                    "action": "no_change",
-                    "message": "Answer already matches"
-                })
+                entry["status"] = "no_change"
+                entry["actions"] = []
+                entry["match_type"] = "answer_matches"
+                entry["matched_text"] = existing_text[:100] if existing_text else "(empty)"
+                results.append(entry)
                 continue
 
-            # Log mismatch
-            results["mismatches"].append({
-                "outline_id": outline_id,
-                "existing": existing_text,
-                "new": new_text,
-                "question": question_para["text"][:100]
-            })
-
-            if not dry_run:
-                replace_answer(service, doc_id, existing_answer, answer_text)
-                results["processed"].append({
-                    "outline_id": outline_id,
-                    "action": "replaced"
-                })
+            # Replace existing answer
+            if dry_run:
+                entry["status"] = "would_replace"
+                actions.append("would_replace")
             else:
-                results["processed"].append({
-                    "outline_id": outline_id,
-                    "action": "would_replace"
-                })
-        else:
-            # Add warning suffix if we couldn't reliably detect existing answers
-            # (e.g., last question with non-indented text after it)
-            warning_suffix = "_uncertain" if detection_uncertain else ""
+                replace_answer(service, doc_id, existing_answer, answer_text)
+                entry["status"] = "replaced"
+                actions.append("replaced")
 
-            if not dry_run:
+            # Include mismatch details
+            entry["previous_answer"] = existing_text
+            entry["new_answer"] = new_text
+        else:
+            # Insert new answer
+            if dry_run:
+                entry["status"] = "would_insert"
+                actions.append("would_insert")
+            else:
                 question_indent = question_para.get("indent_start", 0)
                 insert_answer(service, doc_id, insert_idx, answer_text, question_indent)
-                results["processed"].append({
-                    "outline_id": outline_id,
-                    "action": f"inserted{warning_suffix}"
-                })
-            else:
-                results["processed"].append({
-                    "outline_id": outline_id,
-                    "action": f"would_insert{warning_suffix}"
-                })
+                entry["status"] = "inserted"
+                actions.append("inserted")
 
-    return results
+            # Add warning if detection was uncertain
+            if detection_uncertain:
+                entry["warning"] = (
+                    "Could not reliably detect existing answer. "
+                    "This is the last question with non-indented text after it."
+                )
+
+        entry["actions"] = actions
+        results.append(entry)
+
+    # Now report on document questions that weren't in the input
+    # Get all doc outline IDs and input outline IDs
+    input_ids = set(a.get("outline_id") for a in answers if a.get("outline_id"))
+    paragraphs = get_document_structure(service, doc_id)
+    doc_ids = set(p.get("outline_id") for p in paragraphs if p.get("outline_id"))
+
+    for oid in sorted(doc_ids - input_ids):
+        entry = {"outline_id": oid, "actions": []}
+
+        # Find this question and check if it has an existing answer
+        question_para = find_question_paragraph(paragraphs, oid, None)
+        if question_para:
+            _, existing_answer, _ = determine_insertion_point(paragraphs, question_para)
+            if existing_answer:
+                existing_text = existing_answer["text"].strip()
+                entry["status"] = "not_in_input"
+                entry["existing_answer"] = existing_text[:100] if existing_text else "(empty)"
+                entry["has_answer"] = True
+            else:
+                entry["status"] = "not_in_input"
+                entry["has_answer"] = False
+        else:
+            entry["status"] = "not_in_input"
+            entry["has_answer"] = False
+
+        results.append(entry)
+
+    return {"results": results}
 
 
 def run_form_filler(
@@ -616,7 +645,7 @@ def run_form_filler(
     validation = validate_questions(service, doc_id, answers)
 
     # Process answers
-    results = process_answers(service, doc_id, answers, dry_run=dry_run)
+    processing = process_answers(service, doc_id, answers, dry_run=dry_run)
 
     # Build combined results
     return {
@@ -629,38 +658,33 @@ def run_form_filler(
             "missing_in_input": validation["missing_in_input"],
             "text_mismatches": validation["text_mismatches"]
         },
-        "processing": {
-            "processed": results["processed"],
-            "skipped": results["skipped"],
-            "mismatches": results["mismatches"],
-            "errors": results["errors"]
-        }
+        "results": processing["results"]
     }
 
 
 def print_results(results: dict) -> None:
     """Print results in human-readable format."""
     v = results["validation"]
-    p = results["processing"]
+    r = results["results"]
 
-    # Validation warnings (to stderr via logger)
+    # Validation details (debug level - use LOG_LEVEL=DEBUG to see)
     if v["missing_in_doc"]:
-        logger.warning("Input questions not found in document:")
+        logger.debug("Input questions not found in document:")
         for item in v["missing_in_doc"]:
             text = item.get("validation_text", "")
-            logger.warning(f"  {item['outline_id']}: {text[:50] if text else '(no text)'}")
+            logger.debug(f"  {item['outline_id']}: {text[:50] if text else '(no text)'}")
 
     if v["missing_in_input"]:
-        logger.warning("Document questions not in input:")
+        logger.debug("Document questions not in input:")
         for item in v["missing_in_input"]:
-            logger.warning(f"  {item['outline_id']}: {item['doc_text'][:50]}...")
+            logger.debug(f"  {item['outline_id']}: {item['doc_text'][:50]}...")
 
     if v["text_mismatches"]:
-        logger.warning("Question text mismatches:")
+        logger.debug("Question text mismatches:")
         for item in v["text_mismatches"]:
-            logger.warning(f"  {item['outline_id']}:")
-            logger.warning(f"    expected: {item['expected'][:40]}...")
-            logger.warning(f"    found:    {item['found'][:40]}...")
+            logger.debug(f"  {item['outline_id']}:")
+            logger.debug(f"    expected: {item['expected'][:40]}...")
+            logger.debug(f"    found:    {item['found'][:40]}...")
 
     # Summary to stdout
     print("\n=== Validation Summary ===")
@@ -670,24 +694,66 @@ def print_results(results: dict) -> None:
     print(f"Missing in input: {len(v['missing_in_input'])}")
     print(f"Text mismatches: {len(v['text_mismatches'])}")
 
+    # Results table
     print("\n=== Processing Results ===")
-    print(f"Processed: {len(p['processed'])}")
-    print(f"Skipped: {len(p['skipped'])}")
-    print(f"Answer mismatches: {len(p['mismatches'])}")
-    print(f"Errors: {len(p['errors'])}")
+    print(f"{'ID':<8} {'Status':<16} {'Actions':<20} {'Details'}")
+    print("-" * 70)
+    for entry in r:
+        oid = entry.get("outline_id", "?")
+        status = entry.get("status", "unknown")
+        actions = ", ".join(entry.get("actions", []))
 
-    if p["mismatches"]:
-        print("\n=== Mismatches ===")
-        for m in p["mismatches"]:
-            print(f"\nOutline {m['outline_id']}:")
-            print(f"  Question: {m['question']}")
-            print(f"  Existing: {m['existing'][:100]}...")
-            print(f"  New: {m['new'][:100]}...")
+        # Build details string based on status
+        details = ""
+        if entry.get("warning"):
+            details = f"[WARN] {entry['warning'][:30]}..."
+        elif status == "no_change":
+            details = f"matched: {entry.get('matched_text', '')[:25]}..."
+        elif status in ("replaced", "would_replace"):
+            prev = entry.get("previous_answer", "")
+            new = entry.get("new_answer", "")
+            details = f"'{prev[:15]}...'({len(prev)}) -> '{new[:15]}...'({len(new)})"
+        elif status == "not_in_input":
+            if entry.get("has_answer"):
+                existing = entry.get("existing_answer", "")
+                details = f"has answer: '{existing[:25]}...'"
+            else:
+                details = "(blank)"
+        elif status in ("skipped", "not_found", "error"):
+            details = entry.get("reason", entry.get("error", ""))[:40]
 
-    if p["errors"]:
-        print("\n=== Errors ===")
-        for e in p["errors"]:
-            print(f"  {e}")
+        print(f"{oid:<8} {status:<16} {actions:<20} {details}")
+
+    # Summary counts
+    status_counts = {}
+    for entry in r:
+        status = entry.get("status", "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+    print("-" * 70)
+    print(f"Total: {len(r)}  |  " + "  ".join(f"{s}: {c}" for s, c in sorted(status_counts.items())))
+
+
+def print_doc_link(doc_id: str) -> None:
+    """Print a link to the Google Doc."""
+    print(f"\nhttps://docs.google.com/document/d/{doc_id}/edit")
+
+
+def get_output_filename(prefix: str = "processed", suffix: str = None) -> str:
+    """
+    Generate a unique output filename with timestamp.
+
+    Args:
+        prefix: Filename prefix (default: "processed")
+        suffix: Optional suffix to add before extension (e.g., "01", "native_bullets")
+
+    Returns:
+        Base filename without extension (e.g., "processed_2025-01-01-120000_01")
+    """
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    if suffix:
+        return f"{prefix}_{timestamp}_{suffix}"
+    return f"{prefix}_{timestamp}"
 
 
 def main():
@@ -759,12 +825,17 @@ def main():
         results = run_form_filler(service, args.doc_id, answers, dry_run=args.dry_run)
 
         # Save results to timestamped JSON file
-        timestamp = datetime.now().strftime("%Y-%m-%d-%H%M")
-        output_file = f"processed_{timestamp}.json"
-        with open(output_file, 'w') as f:
+        base_name = get_output_filename()
+        json_file = f"{base_name}.json"
+        md_file = f"{base_name}.md"
+
+        # Store doc_id in results for report generation
+        results["doc_id"] = args.doc_id
+
+        with open(json_file, 'w') as f:
             json.dump(results, f, indent=2)
             f.write('\n')
-        logger.info(f"Results saved to {output_file}")
+        logger.info(f"Results saved to {json_file}")
 
         # Output results
         if args.json:
@@ -772,7 +843,14 @@ def main():
         else:
             print_results(results)
 
-        return 0 if not results["processing"]["errors"] else 1
+        # Generate Markdown report
+        from report import generate_report
+        generate_report(results, args.doc_id, md_file, json_file)
+        print(f"\nReport: {md_file}")
+
+        # Check for errors in results
+        error_count = sum(1 for r in results["results"] if r.get("status") == "error")
+        return 0 if error_count == 0 else 1
 
     except HttpError as e:
         logger.error(f"Google API error: {e}")

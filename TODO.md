@@ -450,44 +450,37 @@ All tests should validate the JSON output structure from `process_answers` to co
 
 ## Enhancements
 
-### Redesign process_answers output structure
+### ~~Redesign process_answers output structure~~ DONE
 
-The current output has separate arrays (processed, skipped, mismatches, errors) which fragments the results.
+The output is now a unified `results` array where each entry contains:
 
-**New design:** Every question (whether found in doc, answers, or both) appears exactly once in the `processed` array by its unique outline_id, with status/action indicators:
-
-```
-processed: [
-  ┌─────────────┬────────────┬─────────────┬──────────────────────────────────────┐
-  │ outline_id  │ in_doc     │ in_answers  │ action / status                      │
-  ├─────────────┼────────────┼─────────────┼──────────────────────────────────────┤
-  │ "1"         │ yes        │ yes         │ "inserted" / "would_insert"          │
-  │ "2"         │ yes        │ yes         │ "replaced" / "would_replace"         │
-  │ "3"         │ yes        │ yes         │ "no_change" (answer matches)         │
-  │ "3a"        │ yes        │ yes         │ "inserted"                           │
-  │ "3b"        │ yes        │ no          │ "missing_answer" (leaf, no answer)   │
-  │ "3c"        │ yes        │ yes         │ "no_change"                          │
-  │ "4"         │ yes        │ no          │ "skipped" (parent, no answer needed) │
-  │ "5"         │ no         │ yes         │ "not_in_doc" (answer has no target)  │
-  │ "6"         │ yes        │ no          │ "missing_answer" (leaf, no answer)   │
-  └─────────────┴────────────┴─────────────┴──────────────────────────────────────┘
-]
+```python
+{
+    "outline_id": "3a",
+    "status": "inserted",      # Primary outcome
+    "actions": ["inserted"],   # List of actions taken
+    "warning": "...",          # Optional warning message
+    # Additional context fields as needed:
+    "match_type": "answer_matches",  # For no_change
+    "matched_text": "...",           # For no_change
+    "previous_answer": "...",        # For replaced
+    "new_answer": "...",             # For replaced
+    "reason": "...",                 # For skipped/not_found
+    "error": "..."                   # For error
+}
 ```
 
-**Action types:**
+**Status types:**
 - `inserted` / `would_insert` - answer added to doc (or would be in dry-run)
 - `replaced` / `would_replace` - existing answer updated (or would be)
-- `no_change` - answer already matches
-- `missing_answer` - leaf question in doc has no answer in input (informational)
-- `skipped` - parent question, no answer needed
-- `not_in_doc` - answer provided but question not found in doc (issue)
+- `no_change` - answer already matches (includes `match_type` and `matched_text`)
+- `skipped` - no answer provided in input
+- `not_found` - question not found in document
 - `error` - processing failed for this item
 
-**Note:** Current hack uses `_uncertain` suffix (e.g., `inserted_uncertain`) when answer detection is ambiguous (last question with non-indented trailing text). The redesign should add a proper `warning` field to each entry instead of encoding it in the action string.
+The `actions` array allows reporting multiple actions (e.g., `["replaced", "fixed_indentation"]`) as we add features like indentation fixing.
 
-This eliminates the need for separate `skipped`, `mismatches`, `missing_answers` arrays - everything is unified in `processed`.
-
-**TODO:** Transfer this visualization to CONTRIBUTING.md (architectural/implementation details)
+The `warning` field replaces the old `_uncertain` suffix hack for flagging ambiguous answer detection.
 
 ---
 
