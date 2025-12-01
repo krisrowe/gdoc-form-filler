@@ -93,12 +93,17 @@ All tests should validate the JSON output structure from `process_answers` to co
 
 **Fix:** Scan forward to find ALL consecutive non-bullet paragraphs that are indented, treat them as a single answer block.
 
-### `replace_answer` doesn't apply styling
+### `replace_answer` doesn't apply styling or fix indentation
 
 Currently `replace_answer` just deletes and inserts plain text. It doesn't:
 - Apply the configured color
 - Set proper indentation
 - Preserve or apply any other formatting
+
+**Required behavior (always, regardless of config):**
+- `replace_answer` should ALWAYS ensure proper indentation of the answer (indented under question)
+- This applies to both replaced answers AND existing answers that match (no_change)
+- Indentation fix is structural correctness, not styling
 
 **Fix:** Add `answer_style` config section (all optional, defaults to API behavior):
 
@@ -107,10 +112,32 @@ answer_style:
   color: blue           # Optional: text color
   font: Arial           # Optional: font family
   size: 11              # Optional: font size in pt
-  preserve_existing: false  # Optional: if true, don't restyle existing answers on replace
+  restyle_existing: false  # Optional: if true, apply color/font/size to existing answers
 ```
 
-Each setting is optional. If `answer_style` section is missing or any setting is omitted, use default API behavior (no explicit styling).
+Each setting is optional. If `answer_style` section is missing or any setting is omitted, use default API behavior (no explicit styling). Note: indentation is always enforced regardless of `restyle_existing`.
+
+### Report array of actions per question
+
+The `processed` output for each question should include an array of actions taken, not just a single action string. This provides transparency into exactly what was done:
+
+```python
+{
+    "outline_id": "3a",
+    "actions": [
+        "replaced",           # Primary action
+        "fixed_indentation",  # Corrected indent to be under question
+        "applied_color"       # Applied configured color
+    ]
+}
+```
+
+Possible action items:
+- `inserted` / `replaced` / `no_change` - primary action
+- `fixed_indentation` - corrected answer indentation
+- `applied_color` - applied color from config
+- `applied_font` - applied font from config
+- `removed_bullets` - removed inherited bullet formatting
 
 ### Test coverage for replace scenarios
 
