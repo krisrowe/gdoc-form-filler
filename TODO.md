@@ -79,6 +79,65 @@ outline_detection:
 4. Various text patterns: "1.", "1)", "a.", "a)", "1.a)", "1a."
 5. Nested structures detected correctly in text-based mode
 
+### Test Document Structure
+
+Google Docs does not support tabs/sheets like Sheets does - each document is a single continuous body. Options for testing both outline types:
+
+1. **Two separate test documents** - one with native bullets, one with text-based numbering. Store both doc IDs in `.test_doc_id` (or separate files like `.test_doc_id_bullets` and `.test_doc_id_text`).
+
+2. **Single document with sections** - use headings or horizontal rules to separate "Section A: Native Bullets" and "Section B: Text-Based Numbering". Test code would need to know which section to target.
+
+3. **Parameterized test doc creation** - `create_test_document()` accepts a parameter for outline type and builds accordingly.
+
+Option 1 (two documents) is cleanest for isolation. Option 3 is most flexible for CI.
+
+---
+
+## Future: Extract Reusable Doc Utilities
+
+### Motivation
+
+The outline detection logic is completely generic - not specific to form filling. It answers: "given a Google Doc, find paragraphs that represent numbered/lettered outline items."
+
+Other utilities being built here are also reusable:
+- Paragraph insertion with proper newline/index handling
+- Bullet formatting removal
+- Indentation management
+- Text styling (color, font, size)
+
+### Proposed Architecture
+
+Extract reusable utilities into **gworkspace-access** (or a new `gdoc-utils` package):
+
+```
+gworkspace-access (or gdoc-utils)
+  └── outline_detection.py
+      - find_outline_paragraphs()
+      - parse_text_based_outline()
+      - parse_native_bullets()
+  └── paragraph_utils.py
+      - insert_paragraph_after()
+      - delete_paragraph()
+      - set_paragraph_indent()
+  └── text_style.py
+      - apply_text_color()
+      - apply_font()
+
+gdoc-form-filler
+  └── form_filler.py
+      - answer matching/validation logic
+      - uses gdoc-utils for all doc manipulation
+```
+
+### When to Extract
+
+Not immediate - wait until:
+1. Text-based outline detection is implemented and working
+2. Patterns stabilize from real-world usage
+3. Clear API boundaries emerge
+
+Then extract to shared package for reuse across projects.
+
 ---
 
 ## Priority: Confirmed Bugs
