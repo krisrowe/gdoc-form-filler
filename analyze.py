@@ -62,88 +62,23 @@ def get_paragraph_text(paragraph: dict) -> str:
     return text.rstrip("\n")
 
 
-def get_document_structure(service, doc_id: str) -> list[dict]:
+def get_document_structure(service, doc_id: str, outline_mode: str = 'auto') -> list[dict]:
     """
-    Fetch document and return a list of bullet paragraphs with outline IDs.
+    Fetch document and return a list of outline paragraphs with IDs.
+
+    Supports two outline detection modes:
+    - 'native_bullets': Use Google Docs API bullet property
+    - 'text_based': Parse paragraph text for patterns like "1.", "a)", etc.
+    - 'auto': Auto-detect based on document content (default)
     """
+    from outline_detection import parse_document_structure
+
     doc = service.documents().get(documentId=doc_id).execute()
     content = doc.get("body", {}).get("content", [])
 
-    paragraphs = []
-    list_counters = {}
-    current_outline_stack = []
-
-    for idx, element in enumerate(content):
-        if "paragraph" not in element:
-            continue
-
-        para = element["paragraph"]
-        bullet = para.get("bullet")
-
-        if not bullet:
-            continue
-
-        text = get_paragraph_text(para)
-        start_index = element.get("startIndex", 0)
-        end_index = element.get("endIndex", 0)
-
-        list_id = bullet.get("listId", "default")
-        nesting_level = bullet.get("nestingLevel", 0)
-
-        if list_id not in list_counters:
-            list_counters[list_id] = {}
-
-        # Reset deeper level counters
-        levels_to_remove = [
-            lvl for lvl in list_counters[list_id] if lvl > nesting_level
-        ]
-        for lvl in levels_to_remove:
-            del list_counters[list_id][lvl]
-
-        # Trim outline stack
-        while current_outline_stack and current_outline_stack[-1][0] >= nesting_level:
-            current_outline_stack.pop()
-
-        # Increment counter
-        if nesting_level not in list_counters[list_id]:
-            list_counters[list_id][nesting_level] = 0
-        list_counters[list_id][nesting_level] += 1
-
-        count = list_counters[list_id][nesting_level]
-
-        # Determine identifier format
-        if nesting_level == 0:
-            identifier = str(count)
-        elif nesting_level == 1:
-            identifier = chr(ord('a') + count - 1) if count <= 26 else f"a{count - 26}"
-        elif nesting_level == 2:
-            romans = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x']
-            identifier = romans[count - 1] if count <= 10 else f"r{count}"
-        else:
-            identifier = f"L{nesting_level}_{count}"
-
-        # Build full outline ID
-        if nesting_level == 0:
-            outline_id = identifier
-        else:
-            parent_outline = ""
-            for level, oid in current_outline_stack:
-                if level == nesting_level - 1:
-                    parent_outline = oid
-                    break
-            outline_id = parent_outline + identifier
-
-        current_outline_stack.append((nesting_level, outline_id))
-
-        paragraphs.append({
-            "outline_id": outline_id,
-            "text": text,
-            "start_index": start_index,
-            "end_index": end_index,
-            "nesting_level": nesting_level
-        })
-
-    return paragraphs
+    # Filter to only return paragraphs with outline_id (for analyze.py compatibility)
+    all_paragraphs = parse_document_structure(content, mode=outline_mode)
+    return [p for p in all_paragraphs if p.get("outline_id")]
 
 
 def flatten_input_questions(data: dict) -> list[dict]:

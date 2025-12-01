@@ -176,9 +176,15 @@ def clear_document(docs_service, doc_id: str) -> None:
     logger.info(f"Cleared document content")
 
 
-def create_test_document(docs_service, existing_doc_id: str = None) -> str:
+def create_test_document(docs_service, existing_doc_id: str = None, outline_type: str = 'native_bullets') -> str:
     """
     Create or reuse a test Google Doc with structured outline.
+
+    Args:
+        docs_service: Google Docs API service
+        existing_doc_id: Existing doc ID to reuse, or None to create new
+        outline_type: 'native_bullets' or 'text_based'
+
     Returns the document ID.
     """
     if existing_doc_id:
@@ -192,6 +198,15 @@ def create_test_document(docs_service, existing_doc_id: str = None) -> str:
         }).execute()
         doc_id = doc["documentId"]
         logger.info(f"Created new test document: {doc_id}")
+
+    if outline_type == 'text_based':
+        return _create_text_based_content(docs_service, doc_id)
+    else:
+        return _create_native_bullets_content(docs_service, doc_id)
+
+
+def _create_native_bullets_content(docs_service, doc_id: str) -> str:
+    """Create test document with native Google Docs bullets."""
 
     # Build content structure
     # Final structure:
@@ -307,9 +322,55 @@ def create_test_document(docs_service, existing_doc_id: str = None) -> str:
     return doc_id
 
 
+def _create_text_based_content(docs_service, doc_id: str) -> str:
+    """Create test document with text-based numbering (no native bullets)."""
+
+    # Build content with text-based numbering like "1.", "2.", "a)", "b)"
+    content_parts = []
+
+    # Intro
+    content_parts.append(
+        "Introduction\n\n"
+        "This is a test form document. Please answer all questions below "
+        "to the best of your ability. Your responses will be kept confidential.\n\n"
+    )
+
+    # Questions with text-based numbering
+    question_num = 0
+    for q in TEST_QUESTIONS["questions"]:
+        question_num += 1
+        content_parts.append(f"{question_num}. {q['question']}\n")
+
+        if "questions" in q:
+            for i, sub_q in enumerate(q["questions"]):
+                letter = chr(ord('a') + i)
+                # Indent sub-questions with spaces and use "a)" format
+                content_parts.append(f"   {letter}) {sub_q['question']}\n")
+
+    # Conclusion
+    content_parts.append(
+        "\nConclusion\n\n"
+        "Thank you for completing this form. Please review your answers before submitting.\n"
+    )
+
+    # Join all content
+    full_text = "".join(content_parts)
+
+    # Insert text
+    docs_service.documents().batchUpdate(
+        documentId=doc_id,
+        body={"requests": [{
+            "insertText": {
+                "location": {"index": 1},
+                "text": full_text
+            }
+        }]}
+    ).execute()
+
+    return doc_id
 
 
-def run_tests(docs_service, doc_id: str) -> dict:
+def run_tests(docs_service, doc_id: str, outline_mode: str = 'auto') -> dict:
     """Run analysis tests against the document."""
     results = {
         "passed": 0,
@@ -323,8 +384,8 @@ def run_tests(docs_service, doc_id: str) -> dict:
     # Test 1: Get document structure
     logger.info("Test 1: Parsing document structure...")
     try:
-        paragraphs = get_document_structure(docs_service, doc_id)
-        bullet_count = len(paragraphs)
+        paragraphs = get_document_structure(docs_service, doc_id, outline_mode=outline_mode)
+        bullet_count = len([p for p in paragraphs if p.get("outline_id")])
 
         if bullet_count == expected_count:
             logger.info(f"  PASS: Found {bullet_count} bullet paragraphs (expected {expected_count})")
@@ -371,8 +432,8 @@ def run_tests(docs_service, doc_id: str) -> dict:
     # Test 3: Check outline IDs
     logger.info("Test 3: Checking outline ID assignment...")
     try:
-        paragraphs = get_document_structure(docs_service, doc_id)
-        outline_ids = [p["outline_id"] for p in paragraphs]
+        paragraphs = get_document_structure(docs_service, doc_id, outline_mode=outline_mode)
+        outline_ids = [p["outline_id"] for p in paragraphs if p.get("outline_id")]
 
         found_ids = [oid for oid in expected_ids if oid in outline_ids]
 
@@ -505,6 +566,12 @@ def main():
         action="store_true",
         help="Enable verbose logging"
     )
+    parser.add_argument(
+        "--outline-type",
+        choices=["native_bullets", "text_based", "both"],
+        default="both",
+        help="Outline type to test (default: both)"
+    )
 
     args = parser.parse_args()
 
@@ -526,38 +593,59 @@ def main():
             else:
                 logger.warning(f"Test doc {existing_doc_id} not found/accessible, creating new one")
 
-        # Create or reuse test document
-        doc_id = create_test_document(docs_service, doc_id)
-        doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
+        # Determine which outline types to test
+        if args.outline_type == "both":
+            outline_types = ["native_bullets", "text_based"]
+        else:
+            outline_types = [args.outline_type]
 
-        # Save doc_id if new
-        if doc_id != existing_doc_id:
-            save_test_doc_id(doc_id)
-            logger.info(f"Saved test_doc_id to {TEST_DOC_ID_FILE}")
+        total_results = {"passed": 0, "failed": 0, "errors": []}
 
-        logger.info(f"Document ID: {doc_id}")
-        logger.info("=" * 60)
+        for outline_type in outline_types:
+            logger.info("\n" + "=" * 60)
+            logger.info(f"TESTING OUTLINE TYPE: {outline_type}")
+            logger.info("=" * 60)
 
-        # Run tests
-        logger.info("\nRunning tests...\n")
-        results = run_tests(docs_service, doc_id)
+            # Create or reuse test document with this outline type
+            doc_id = create_test_document(docs_service, doc_id, outline_type=outline_type)
+            doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
 
-        # Summary
+            # Save doc_id if new
+            if doc_id != existing_doc_id:
+                save_test_doc_id(doc_id)
+                existing_doc_id = doc_id
+
+            logger.info(f"Document ID: {doc_id}")
+
+            # Run tests with appropriate outline mode
+            logger.info(f"\nRunning tests for {outline_type}...\n")
+            results = run_tests(docs_service, doc_id, outline_mode=outline_type)
+
+            # Accumulate results
+            total_results["passed"] += results["passed"]
+            total_results["failed"] += results["failed"]
+            total_results["errors"].extend(
+                [f"[{outline_type}] {e}" for e in results["errors"]]
+            )
+
+            logger.info(f"\n{outline_type} results: {results['passed']} passed, {results['failed']} failed")
+
+        # Final Summary
         logger.info("\n" + "=" * 60)
-        logger.info("TEST SUMMARY")
+        logger.info("FINAL TEST SUMMARY")
         logger.info("=" * 60)
-        logger.info(f"Passed: {results['passed']}")
-        logger.info(f"Failed: {results['failed']}")
+        logger.info(f"Total Passed: {total_results['passed']}")
+        logger.info(f"Total Failed: {total_results['failed']}")
 
-        if results["errors"]:
+        if total_results["errors"]:
             logger.info("\nErrors:")
-            for err in results["errors"]:
+            for err in total_results["errors"]:
                 logger.info(f"  - {err}")
 
         # Print URL to stdout for easy access
         print(f"\n{doc_url}\n")
 
-        return 0 if results["failed"] == 0 else 1
+        return 0 if total_results["failed"] == 0 else 1
 
     except HttpError as e:
         logger.error(f"Google API error: {e}")
