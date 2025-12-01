@@ -15,10 +15,9 @@ Or enable it via the [Google Cloud Console](https://console.cloud.google.com/api
 
 **Requirements:**
 - Python 3.10+
-- [gwsa](https://github.com/krisrowe/gworkspace-access) CLI for OAuth token generation
 - Google Cloud project with Docs API enabled (as shown above)
 
-The OAuth token will allow access to any Google Doc that the authenticated user has permission to view or edit.
+Authentication is handled via [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials) (ADC).
 
 ## Quick Start
 
@@ -28,12 +27,9 @@ make setup
 # Edit config.yaml with your doc_id
 ```
 
-**2. Generate OAuth token** (requires [gwsa](https://github.com/krisrowe/gworkspace-access) CLI)
+**2. Authenticate** (see [Authentication](#authentication) for options)
 ```bash
-gwsa create-token \
-  --scope https://www.googleapis.com/auth/documents \
-  --client-creds ~/.config/gworkspace-access/client_secrets.json \
-  --output user_token.json
+gcloud auth application-default login --scopes=https://www.googleapis.com/auth/documents
 ```
 
 **3. Test** (reuses persistent test doc)
@@ -72,7 +68,6 @@ This installs dependencies and creates `config.yaml` from the template.
 Edit `config.yaml`:
 
 ```yaml
-token: user_token.json
 doc_id: 1aBcDeFgHiJkLmNoPqRsTuVwXyZ  # Your Google Doc ID
 questions_file: answers.json
 csv_file: answers.csv
@@ -83,18 +78,48 @@ The doc ID is the long string in your Google Doc URL:
 https://docs.google.com/document/d/[DOC_ID_HERE]/edit
 ```
 
-## OAuth Token
+## Authentication
 
-Generate a token with Docs scope:
+This tool uses [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials) (ADC), the standard Google Cloud authentication mechanism.
+
+### Option 1: gcloud CLI (Recommended)
+
+The simplest approach for most users:
 
 ```bash
-gwsa create-token \
-  --scope https://www.googleapis.com/auth/documents \
-  --client-creds ~/.config/gworkspace-access/client_secrets.json \
-  --output user_token.json
+gcloud auth application-default login --scopes=https://www.googleapis.com/auth/documents
 ```
 
-This opens a browser for Google OAuth consent. The token is saved locally and auto-refreshes.
+This opens a browser for Google OAuth consent. Credentials are stored in `~/.config/gcloud/application_default_credentials.json` and auto-refresh.
+
+### Option 2: Custom OAuth Token
+
+For accounts with strict security settings (Advanced Protection Program, hardware security keys), or when you need a custom OAuth client:
+
+1. Create a token using [gwsa](https://github.com/krisrowe/gworkspace-access):
+   ```bash
+   gwsa access token \
+     --scope https://www.googleapis.com/auth/documents \
+     --client-creds /path/to/client_secrets.json \
+     --output /path/to/token.json
+   ```
+
+2. Set the environment variable:
+   ```bash
+   export GOOGLE_APPLICATION_CREDENTIALS=/path/to/token.json
+   ```
+
+The tool will automatically use this token instead of gcloud credentials.
+
+### Option 3: Service Account (CI/CD)
+
+For automated pipelines with Google Workspace:
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+```
+
+Requires domain-wide delegation configured by your Workspace admin.
 
 ---
 
@@ -271,8 +296,10 @@ Outputs raw paragraph data with outline IDs and character indices.
 
 ## Troubleshooting
 
-### "Token file not found"
-Run the `gwsa create-token` command to generate `user_token.json`.
+### "Could not automatically determine credentials"
+No credentials found. Either:
+- Run `gcloud auth application-default login --scopes=https://www.googleapis.com/auth/documents`
+- Or set `GOOGLE_APPLICATION_CREDENTIALS` to point to a token file
 
 ### "Set doc_id in config.yaml"
 Edit `config.yaml` and add your Google Doc ID.
@@ -282,8 +309,14 @@ Edit `config.yaml` and add your Google Doc ID.
 - Run `make analyze-dump` to see the actual outline IDs detected
 - Outline IDs are assigned sequentially (1, 2, 3...) based on bullet order
 
-### Token expired
-Tokens auto-refresh. If issues persist, regenerate with `gwsa create-token`.
+### "Request had insufficient authentication scopes"
+Your credentials don't include the Docs API scope. Re-authenticate:
+```bash
+gcloud auth application-default login --scopes=https://www.googleapis.com/auth/documents
+```
+
+### gcloud auth blocked by account security
+Some accounts (Advanced Protection Program, hardware security keys) block gcloud's OAuth client. Use [Option 2](#option-2-custom-oauth-token) with a custom OAuth client instead.
 
 ---
 
@@ -292,7 +325,6 @@ Tokens auto-refresh. If issues persist, regenerate with `gwsa create-token`.
 | File | Description |
 |------|-------------|
 | `config.yaml` | Your local configuration (gitignored) |
-| `user_token.json` | OAuth token (gitignored) |
 | `answers.csv` | Your answers in CSV format (gitignored) |
 | `answers.json` | Your answers in JSON format (gitignored) |
 | `*.example` | Template files (committed) |

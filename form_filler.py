@@ -16,6 +16,7 @@ import sys
 from typing import Optional
 
 import yaml
+import google.auth
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -104,22 +105,23 @@ def flatten_questions(data: dict) -> list[dict]:
     return answers
 
 
-def load_credentials(token_path: str) -> Credentials:
-    """Load and refresh credentials from token file."""
-    if not os.path.exists(token_path):
-        raise FileNotFoundError(f"Token file not found: {token_path}")
+def load_credentials():
+    """Load credentials using Application Default Credentials.
 
-    creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+    Credentials are loaded from (in order):
+    1. GOOGLE_APPLICATION_CREDENTIALS environment variable (path to token file)
+    2. gcloud application-default credentials (~/.config/gcloud/application_default_credentials.json)
+    3. GCE/Cloud Run metadata service (when running on Google Cloud)
 
-    if creds and creds.expired and creds.refresh_token:
-        logger.info("Refreshing expired token...")
+    Returns:
+        Google credentials object
+    """
+    creds, project = google.auth.default(scopes=SCOPES)
+
+    if creds.expired and hasattr(creds, 'refresh'):
+        logger.info("Refreshing expired credentials...")
         creds.refresh(Request())
-        with open(token_path, "w") as f:
-            f.write(creds.to_json())
-        logger.info("Token refreshed and saved.")
-
-    if not creds or not creds.valid:
-        raise ValueError("Invalid credentials. Please regenerate the token.")
+        logger.info("Credentials refreshed.")
 
     return creds
 
@@ -736,11 +738,6 @@ def main():
         help="JSON file with answers"
     )
     parser.add_argument(
-        "--token",
-        default="user_token.json",
-        help="Path to user_token.json (default: user_token.json)"
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be done without making changes"
@@ -778,7 +775,7 @@ def main():
             CONFIG["answer_color"] = file_config.get("answer_color")
 
     try:
-        creds = load_credentials(args.token)
+        creds = load_credentials()
         service = get_docs_service(creds)
 
         if args.dump_structure:

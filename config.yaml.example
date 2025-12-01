@@ -6,9 +6,6 @@
 #   Drive with multiple test docs. The doc ID is stored in .test_doc_id (gitignored).
 # - If the test doc is deleted or inaccessible, the test will create a new one.
 
-# Path to OAuth token file
-token: user_token.json
-
 # Google Doc ID to work with
 doc_id: YOUR_DOCUMENT_ID_HERE
 
