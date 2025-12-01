@@ -234,6 +234,90 @@ Tests run in order (alphabetically by method name). Shared `test_doc` fixture pr
 
 ---
 
+## Future: Service Account for CI Testing
+
+### Goal
+
+Use a service account to create publicly-viewable test documents, eliminating the need for user OAuth tokens in CI/automated testing.
+
+### How It Would Work
+
+1. Service account creates test doc (lives in service account's "drive")
+2. Share doc publicly via Drive API (`anyone` role = `reader`)
+3. Output public URL for viewing test results
+4. Clean up doc after test run (or leave for debugging)
+
+### Required Scopes
+
+- `https://www.googleapis.com/auth/documents` - create/edit docs
+- `https://www.googleapis.com/auth/drive.file` - share files the account created
+
+### Security Properties
+
+The `drive.file` scope is minimal:
+- Only accesses files the service account itself created
+- Cannot access any user files or other docs
+- If credentials compromised, attacker can only:
+  - Create spam docs (quota-limited)
+  - Delete/modify test docs created by this account
+  - No access to any real user data
+
+### Requirements
+
+- Google Cloud project (free tier works)
+- Service account with JSON key
+- No Workspace org required
+- Works with regular consumer Google accounts
+
+### Implementation Notes
+
+```python
+from google.oauth2 import service_account
+
+creds = service_account.Credentials.from_service_account_file(
+    'service-account.json',
+    scopes=[
+        'https://www.googleapis.com/auth/documents',
+        'https://www.googleapis.com/auth/drive.file'
+    ]
+)
+
+# After creating doc, share publicly:
+drive_service.permissions().create(
+    fileId=doc_id,
+    body={'type': 'anyone', 'role': 'reader'}
+).execute()
+
+public_url = f"https://docs.google.com/document/d/{doc_id}/view"
+```
+
+### When to Implement
+
+- When setting up CI/CD pipeline
+- When multiple contributors need to run tests without sharing OAuth tokens
+
+### Future Enhancement: GitHub Actions Integration
+
+Once service account testing works locally, enable automated testing on commits:
+
+1. Store service account JSON in GitHub Secrets (e.g., `GOOGLE_SERVICE_ACCOUNT`)
+2. GitHub Actions workflow decodes secret and writes to temp file
+3. Tests run automatically on push/PR
+4. Public doc URL included in workflow output for debugging failed tests
+
+```yaml
+# .github/workflows/test.yml
+- name: Setup credentials
+  run: echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT }}" | base64 -d > service-account.json
+
+- name: Run tests
+  run: python test.py --service-account service-account.json
+```
+
+This provides true CI/CD without exposing any user credentials.
+
+---
+
 ## Resolved Bugs
 
 ### ~~1. Document structure corruption after first insert~~ ✓ FIXED
