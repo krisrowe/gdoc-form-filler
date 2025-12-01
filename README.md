@@ -101,12 +101,16 @@ For accounts with strict security settings (Advanced Protection Program, hardwar
    gwsa access token \
      --scope https://www.googleapis.com/auth/documents \
      --client-creds /path/to/client_secrets.json \
-     --output /path/to/token.json
+     --output ./user_token.json
    ```
 
-2. Set the environment variable:
+2. Configure via `.env` file (recommended) or environment variable:
    ```bash
-   export GOOGLE_APPLICATION_CREDENTIALS=/path/to/token.json
+   # Option A: Use .env file (recommended for local development)
+   cp .env.example .env
+
+   # Option B: Set environment variable directly
+   export GOOGLE_APPLICATION_CREDENTIALS=./user_token.json
    ```
 
 The tool will automatically use this token instead of gcloud credentials.
@@ -325,6 +329,7 @@ Some accounts (Advanced Protection Program, hardware security keys) block gcloud
 | File | Description |
 |------|-------------|
 | `config.yaml` | Your local configuration (gitignored) |
+| `.env` | Environment variables for credentials (gitignored) |
 | `answers.csv` | Your answers in CSV format (gitignored) |
 | `answers.json` | Your answers in JSON format (gitignored) |
 | `*.example` | Template files (committed) |

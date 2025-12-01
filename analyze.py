@@ -12,10 +12,15 @@ import logging
 import os
 import sys
 
+from dotenv import load_dotenv
+import google.auth
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+
+# Load environment variables from .env file (if present)
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,21 +31,23 @@ logger = logging.getLogger(__name__)
 SCOPES = ["https://www.googleapis.com/auth/documents.readonly"]
 
 
-def load_credentials(token_path: str) -> Credentials:
-    """Load and refresh credentials from token file."""
-    if not os.path.exists(token_path):
-        raise FileNotFoundError(f"Token file not found: {token_path}")
+def load_credentials():
+    """Load credentials using Application Default Credentials.
 
-    creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+    Credentials are loaded from (in order):
+    1. GOOGLE_APPLICATION_CREDENTIALS environment variable (path to token file)
+    2. gcloud application-default credentials (~/.config/gcloud/application_default_credentials.json)
+    3. GCE/Cloud Run metadata service (when running on Google Cloud)
 
-    if creds and creds.expired and creds.refresh_token:
-        logger.info("Refreshing expired token...")
+    Returns:
+        Google credentials object
+    """
+    creds, project = google.auth.default(scopes=SCOPES)
+
+    if creds.expired and hasattr(creds, 'refresh'):
+        logger.info("Refreshing expired credentials...")
         creds.refresh(Request())
-        with open(token_path, "w") as f:
-            f.write(creds.to_json())
-
-    if not creds or not creds.valid:
-        raise ValueError("Invalid credentials. Please regenerate the token.")
+        logger.info("Credentials refreshed.")
 
     return creds
 
@@ -225,11 +232,6 @@ def main():
         help="JSON file with expected questions"
     )
     parser.add_argument(
-        "--token",
-        default="user_token.json",
-        help="Path to user_token.json (default: user_token.json)"
-    )
-    parser.add_argument(
         "-o", "--output",
         help="Output JSON file (default: stdout)"
     )
@@ -250,7 +252,7 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
 
     try:
-        creds = load_credentials(args.token)
+        creds = load_credentials()
         service = build("docs", "v1", credentials=creds)
 
         if args.dump_doc:
