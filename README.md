@@ -32,12 +32,11 @@ make setup
 ```bash
 gwsa create-token \
   --scope https://www.googleapis.com/auth/documents \
-  --scope https://www.googleapis.com/auth/drive.file \
   --client-creds ~/.config/gworkspace-access/client_secrets.json \
   --output user_token.json
 ```
 
-**3. Test** (creates temp doc, runs tests, deletes doc)
+**3. Test** (reuses persistent test doc)
 ```bash
 make test
 ```
@@ -86,12 +85,11 @@ https://docs.google.com/document/d/[DOC_ID_HERE]/edit
 
 ## OAuth Token
 
-Generate a token with Docs and Drive scopes:
+Generate a token with Docs scope:
 
 ```bash
 gwsa create-token \
   --scope https://www.googleapis.com/auth/documents \
-  --scope https://www.googleapis.com/auth/drive.file \
   --client-creds ~/.config/gworkspace-access/client_secrets.json \
   --output user_token.json
 ```
@@ -105,8 +103,7 @@ This opens a browser for Google OAuth consent. The token is saved locally and au
 | Command | Description |
 |---------|-------------|
 | `make setup` | Install dependencies, create config.yaml |
-| `make test` | Run integration test (creates/deletes temp doc) |
-| `make test-keep` | Run test but keep the document, print URL |
+| `make test` | Run integration test |
 | `make import-answers` | Convert CSV to JSON |
 | `make analyze` | Analyze doc structure against expected questions |
 | `make analyze-dump` | Dump raw document structure (debugging) |

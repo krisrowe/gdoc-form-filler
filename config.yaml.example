@@ -1,5 +1,10 @@
 # gdoc-form-filler configuration
 # Copy this file to config.yaml and fill in your values
+#
+# Testing notes:
+# - Running `make test` reuses a single test document to avoid polluting your
+#   Drive with multiple test docs. The doc ID is stored in .test_doc_id (gitignored).
+# - If the test doc is deleted or inaccessible, the test will create a new one.
 
 # Path to OAuth token file
 token: user_token.json

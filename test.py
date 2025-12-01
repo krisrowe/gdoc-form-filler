@@ -3,7 +3,7 @@
 Integration test for gdoc-form-filler.
 
 Reuses a single test Google Doc, clearing and rebuilding its contents each run.
-The doc ID is stored in config.yaml under test_doc_id.
+The doc ID is stored in .test_doc_id (gitignored).
 
 Set CONFIG_FILE env var to use an alternative config file:
     CONFIG_FILE=config.yaml.example python test.py
@@ -23,7 +23,7 @@ from googleapiclient.errors import HttpError
 
 # Import our modules
 from analyze import analyze_document, flatten_input_questions, get_document_structure
-from form_filler import run_form_filler, flatten_questions
+from form_filler import validate_questions, process_answers, flatten_questions
 
 logging.basicConfig(
     level=logging.INFO,
@@ -396,22 +396,19 @@ def run_tests(docs_service, doc_id: str) -> dict:
         results["failed"] += 1
         results["errors"].append(str(e))
 
-    # Test 4: Validate using form_filler's run_form_filler
-    logger.info("Test 4: Testing form_filler validation (dry-run)...")
+    # Test 4: Validate using form_filler's validate_questions
+    logger.info("Test 4: Testing validate_questions...")
     try:
         answers = flatten_questions(TEST_QUESTIONS)
-        filler_results = run_form_filler(docs_service, doc_id, answers, dry_run=True)
-
-        validation = filler_results["validation"]
-        processing = filler_results["processing"]
+        validation = validate_questions(docs_service, doc_id, answers)
         errors = []
 
         # Check counts match
-        if validation["doc_question_count"] != expected_count:
-            errors.append(f"doc_question_count: expected {expected_count}, got {validation['doc_question_count']}")
+        if len(validation["doc_ids"]) != expected_count:
+            errors.append(f"doc_question_count: expected {expected_count}, got {len(validation['doc_ids'])}")
 
-        if validation["input_question_count"] != expected_count:
-            errors.append(f"input_question_count: expected {expected_count}, got {validation['input_question_count']}")
+        if len(validation["input_ids"]) != expected_count:
+            errors.append(f"input_question_count: expected {expected_count}, got {len(validation['input_ids'])}")
 
         # Check no missing questions
         if validation["missing_in_doc"]:
@@ -426,11 +423,7 @@ def run_tests(docs_service, doc_id: str) -> dict:
 
         # Check doc_ids match expected
         if sorted(validation["doc_ids"]) != sorted(expected_ids):
-            errors.append(f"doc_ids mismatch: expected {expected_ids}, got {validation['doc_ids']}")
-
-        # Check processing had no errors
-        if processing["errors"]:
-            errors.append(f"processing errors: {processing['errors']}")
+            errors.append(f"doc_ids mismatch: expected {expected_ids}, got {sorted(validation['doc_ids'])}")
 
         if errors:
             for err in errors:
@@ -438,9 +431,64 @@ def run_tests(docs_service, doc_id: str) -> dict:
             results["failed"] += 1
             results["errors"].extend(errors)
         else:
-            logger.info(f"  PASS: form_filler validation found no discrepancies")
-            logger.info(f"    doc_ids: {validation['doc_ids']}")
-            logger.info(f"    would_insert: {len([p for p in processing['processed'] if p.get('action') == 'would_insert'])}")
+            logger.info(f"  PASS: validate_questions found no discrepancies")
+            logger.info(f"    doc_ids: {sorted(validation['doc_ids'])}")
+            results["passed"] += 1
+
+    except Exception as e:
+        logger.error(f"  ERROR: {e}")
+        results["failed"] += 1
+        results["errors"].append(str(e))
+
+    # Test 5: Actually fill in answers and verify they were inserted
+    logger.info("Test 5: Testing process_answers...")
+    try:
+        answers = flatten_questions(TEST_QUESTIONS)
+        processing = process_answers(docs_service, doc_id, answers, dry_run=False)
+        errors = []
+
+        # Check no processing errors
+        if processing["errors"]:
+            errors.append(f"processing errors: {processing['errors']}")
+
+        # Check answers were inserted
+        inserted = [p for p in processing["processed"] if p.get("action") == "inserted"]
+        expected_answers = [a for a in answers if a.get("answer")]
+        if len(inserted) != len(expected_answers):
+            errors.append(f"inserted count: expected {len(expected_answers)}, got {len(inserted)}")
+
+        # Verify by re-reading full document (not just bullets)
+        # Answers are separate non-bullet paragraphs following each question
+        doc = docs_service.documents().get(documentId=doc_id).execute()
+        content = doc.get("body", {}).get("content", [])
+
+        # Build list of all paragraph texts in order
+        all_paragraphs = []
+        for elem in content:
+            if "paragraph" in elem:
+                para = elem["paragraph"]
+                text = ""
+                for e in para.get("elements", []):
+                    tr = e.get("textRun")
+                    if tr:
+                        text += tr.get("content", "")
+                all_paragraphs.append(text.strip())
+
+        # Check that each answer appears somewhere in the document
+        for answer_entry in expected_answers:
+            oid = answer_entry["outline_id"]
+            answer_text = answer_entry["answer"]
+            found = any(answer_text in p for p in all_paragraphs)
+            if not found:
+                errors.append(f"answer for {oid} not found in document: '{answer_text}'")
+
+        if errors:
+            for err in errors:
+                logger.error(f"  FAIL: {err}")
+            results["failed"] += 1
+            results["errors"].extend(errors)
+        else:
+            logger.info(f"  PASS: {len(inserted)} answers inserted and verified")
             results["passed"] += 1
 
     except Exception as e:

@@ -8,6 +8,7 @@ client_secrets.json
 *.json
 *.csv
 *.yaml
+*.tmp
 .test_doc_id
 !*.example
 

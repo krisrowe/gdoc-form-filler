@@ -315,14 +315,45 @@ def insert_answer(
     service,
     doc_id: str,
     index: int,
-    answer_text: str
+    answer_text: str,
+    question_indent: float = 0
 ) -> None:
-    """Insert answer text at the specified index."""
+    """
+    Insert answer text at the specified index.
+
+    Note: index should be paragraph's end_index. We insert answer + newline,
+    placing it after the paragraph's trailing newline (which is included in end_index).
+    We also remove bullet formatting and indent the answer under the question.
+    """
+    text_to_insert = f"{answer_text}\n"
+    # Indent answer more than the question (question_indent + 36pt)
+    answer_indent = question_indent + 36
     requests = [
         {
             "insertText": {
                 "location": {"index": index},
-                "text": f"\n{answer_text}"
+                "text": text_to_insert
+            }
+        },
+        {
+            "deleteParagraphBullets": {
+                "range": {
+                    "startIndex": index,
+                    "endIndex": index + len(text_to_insert)
+                }
+            }
+        },
+        {
+            "updateParagraphStyle": {
+                "range": {
+                    "startIndex": index,
+                    "endIndex": index + len(text_to_insert)
+                },
+                "paragraphStyle": {
+                    "indentStart": {"magnitude": answer_indent, "unit": "PT"},
+                    "indentFirstLine": {"magnitude": answer_indent, "unit": "PT"}
+                },
+                "fields": "indentStart,indentFirstLine"
             }
         }
     ]
@@ -464,10 +495,18 @@ def process_answers(
         validation_text = answer_entry.get("validation_text")
         answer_text = answer_entry.get("answer")
 
-        if not outline_id or not answer_text:
+        if not outline_id:
             results["errors"].append({
                 "entry": answer_entry,
-                "error": "Missing outline_id or answer"
+                "error": "Missing outline_id"
+            })
+            continue
+
+        # Skip entries without answers (parent questions or incomplete answers)
+        if not answer_text:
+            results["skipped"].append({
+                "outline_id": outline_id,
+                "reason": "No answer provided"
             })
             continue
 
@@ -524,7 +563,8 @@ def process_answers(
                 })
         else:
             if not dry_run:
-                insert_answer(service, doc_id, insert_idx, answer_text)
+                question_indent = question_para.get("indent_start", 0)
+                insert_answer(service, doc_id, insert_idx, answer_text, question_indent)
                 results["processed"].append({
                     "outline_id": outline_id,
                     "action": "inserted"
