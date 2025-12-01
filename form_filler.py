@@ -228,7 +228,7 @@ def find_question_paragraph(
 def determine_insertion_point(
     paragraphs: list[dict],
     question_para: dict
-) -> tuple[int, Optional[dict]]:
+) -> tuple[int, Optional[dict], bool]:
     """
     Determine where to insert/update the answer for a question.
 
@@ -236,9 +236,11 @@ def determine_insertion_point(
     rather than list positions, so results remain valid after document edits.
 
     Returns:
-        (insertion_index, existing_answer_para)
+        (insertion_index, existing_answer_para, detection_uncertain)
         - insertion_index: character index where new text should be inserted
         - existing_answer_para: if there's an existing answer paragraph, return it
+        - detection_uncertain: True if we couldn't reliably detect existing answers
+          (e.g., last question with non-indented text after it)
     """
     q_end = question_para["end_index"]
     q_indent = question_para.get("indent_start", 0)
@@ -253,23 +255,38 @@ def determine_insertion_point(
 
     # No paragraph after this question - insert at end
     if next_para is None:
-        return q_end, None
+        return q_end, None, False
 
     # If next paragraph is a bullet, insert between question and next bullet
     if next_para["is_bullet"]:
-        return q_end, None
+        return q_end, None, False
 
     # Next paragraph is not a bullet - check if it's an existing answer
-    # An answer is typically indented more than the question, or is any
-    # non-bullet paragraph immediately following the question
+    # We consider it an answer if:
+    # 1. It's indented more than the question (traditional detection), OR
+    # 2. There's another bullet/outline paragraph after it (meaning this non-bullet
+    #    is sandwiched between questions, so it must be an answer)
+    #
+    # This handles:
+    # - Properly indented answers (inserted by this tool)
+    # - Manually typed answers without indentation (if followed by more questions)
+    # - But NOT conclusion/footer paragraphs after the last question
     next_indent = next_para.get("indent_start", 0)
 
     if next_indent > q_indent:
-        # This appears to be an existing answer (indented under question)
-        return next_para["start_index"], next_para
+        # Indented under question - definitely an answer
+        return next_para["start_index"], next_para, False
 
-    # Not indented more - insert after question
-    return q_end, None
+    # Check if there's another bullet after this non-bullet paragraph
+    # If so, this paragraph is between two questions and is likely an answer
+    for p in paragraphs:
+        if p["start_index"] > next_para["end_index"] and p["is_bullet"]:
+            # Found a bullet after the non-bullet - treat non-bullet as answer
+            return next_para["start_index"], next_para, False
+
+    # No bullet after, and not indented - could be footer text OR an un-indented answer
+    # We can't reliably tell, so we insert new answer but flag uncertainty
+    return q_end, None, True
 
 
 # Named colors mapped to RGB values (0-1 range for Google Docs API)
@@ -521,7 +538,7 @@ def process_answers(
             continue
 
         # Determine insertion point
-        insert_idx, existing_answer = determine_insertion_point(
+        insert_idx, existing_answer, detection_uncertain = determine_insertion_point(
             paragraphs, question_para
         )
 
@@ -557,17 +574,21 @@ def process_answers(
                     "action": "would_replace"
                 })
         else:
+            # Add warning suffix if we couldn't reliably detect existing answers
+            # (e.g., last question with non-indented text after it)
+            warning_suffix = "_uncertain" if detection_uncertain else ""
+
             if not dry_run:
                 question_indent = question_para.get("indent_start", 0)
                 insert_answer(service, doc_id, insert_idx, answer_text, question_indent)
                 results["processed"].append({
                     "outline_id": outline_id,
-                    "action": "inserted"
+                    "action": f"inserted{warning_suffix}"
                 })
             else:
                 results["processed"].append({
                     "outline_id": outline_id,
-                    "action": "would_insert"
+                    "action": f"would_insert{warning_suffix}"
                 })
 
     return results

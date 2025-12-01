@@ -533,8 +533,8 @@ def run_tests(docs_service, doc_id: str, outline_mode: str = 'auto') -> dict:
         if processing["errors"]:
             errors.append(f"processing errors: {processing['errors']}")
 
-        # Check answers were inserted
-        inserted = [p for p in processing["processed"] if p.get("action") == "inserted"]
+        # Check answers were inserted (action starts with "inserted", may have "_uncertain" suffix)
+        inserted = [p for p in processing["processed"] if p.get("action", "").startswith("inserted")]
         expected_answers = [a for a in answers if a.get("answer")]
         if len(inserted) != len(expected_answers):
             errors.append(f"inserted count: expected {len(expected_answers)}, got {len(inserted)}")

@@ -342,13 +342,17 @@ This provides true CI/CD without exposing any user credentials.
 
 ## Replace Logic Brittleness
 
-### HIGH PRIORITY: Indent-based answer detection is fragile
+### ~~HIGH PRIORITY: Indent-based answer detection is fragile~~ PARTIALLY FIXED
 
-`determine_insertion_point` assumes existing answers are indented MORE than their question (line 312). If someone manually typed an answer without proper indentation, or if the answer was inserted by another tool, it won't be detected as an existing answer - leading to duplicate answers being inserted.
+`determine_insertion_point` now detects existing answers using two methods:
+1. Indentation (original): paragraph indented more than question
+2. Position (new): non-bullet paragraph between two questions (sandwiched)
 
-**Fix:** Don't rely solely on indentation. Consider:
-- Any non-bullet paragraph immediately after a question is likely an answer
-- Or use a marker/pattern to identify answers
+**Limitation:** For the LAST question in a document, if there's non-indented text after it (e.g., footer/conclusion), we can't reliably tell if it's an existing answer or document text. In this case:
+- We insert a new answer (may create duplicate if un-indented answer existed)
+- Action is reported as `inserted_uncertain` to flag the ambiguity
+
+**Future:** Consider content-based heuristics (answer length, header detection) or explicit answer markers.
 
 ### Multi-paragraph answers
 
@@ -478,6 +482,8 @@ processed: [
 - `skipped` - parent question, no answer needed
 - `not_in_doc` - answer provided but question not found in doc (issue)
 - `error` - processing failed for this item
+
+**Note:** Current hack uses `_uncertain` suffix (e.g., `inserted_uncertain`) when answer detection is ambiguous (last question with non-indented trailing text). The redesign should add a proper `warning` field to each entry instead of encoding it in the action string.
 
 This eliminates the need for separate `skipped`, `mismatches`, `missing_answers` arrays - everything is unified in `processed`.
 
