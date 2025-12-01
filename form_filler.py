@@ -15,6 +15,7 @@ import re
 import sys
 from typing import Optional
 
+import yaml
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -28,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 # Google Docs API scope
 SCOPES = ["https://www.googleapis.com/auth/documents"]
+
+# Module-level config (loaded by main or set by callers)
+CONFIG = {
+    "answer_color": None,  # Optional: "blue", "red", etc.
+}
 
 
 def flatten_questions(data: dict) -> list[dict]:
@@ -311,6 +317,19 @@ def determine_insertion_point(
     return question_para["end_index"], None
 
 
+# Named colors mapped to RGB values (0-1 range for Google Docs API)
+NAMED_COLORS = {
+    "blue": {"red": 0.0, "green": 0.0, "blue": 1.0},
+    "red": {"red": 1.0, "green": 0.0, "blue": 0.0},
+    "green": {"red": 0.0, "green": 0.5, "blue": 0.0},
+    "yellow": {"red": 1.0, "green": 1.0, "blue": 0.0},
+    "cyan": {"red": 0.0, "green": 1.0, "blue": 1.0},
+    "magenta": {"red": 1.0, "green": 0.0, "blue": 1.0},
+    "orange": {"red": 1.0, "green": 0.5, "blue": 0.0},
+    "purple": {"red": 0.5, "green": 0.0, "blue": 0.5},
+}
+
+
 def insert_answer(
     service,
     doc_id: str,
@@ -324,6 +343,7 @@ def insert_answer(
     Note: index should be paragraph's end_index. We insert answer + newline,
     placing it after the paragraph's trailing newline (which is included in end_index).
     We also remove bullet formatting and indent the answer under the question.
+    Color is read from CONFIG["answer_color"] if set.
     """
     text_to_insert = f"{answer_text}\n"
     # Indent answer more than the question (question_indent + 36pt)
@@ -357,6 +377,26 @@ def insert_answer(
             }
         }
     ]
+
+    # Apply color if configured
+    color = CONFIG.get("answer_color")
+    if color and color.lower() in NAMED_COLORS:
+        rgb = NAMED_COLORS[color.lower()]
+        requests.append({
+            "updateTextStyle": {
+                "range": {
+                    "startIndex": index,
+                    "endIndex": index + len(text_to_insert) - 1  # exclude trailing newline
+                },
+                "textStyle": {
+                    "foregroundColor": {
+                        "color": {"rgbColor": rgb}
+                    }
+                },
+                "fields": "foregroundColor"
+            }
+        })
+
     service.documents().batchUpdate(
         documentId=doc_id,
         body={"requests": requests}
@@ -711,11 +751,22 @@ def main():
         action="store_true",
         help="Enable verbose logging"
     )
+    parser.add_argument(
+        "--config",
+        default="config.yaml",
+        help="Path to config.yaml (default: config.yaml)"
+    )
 
     args = parser.parse_args()
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+
+    # Load config and set module-level CONFIG
+    if os.path.exists(args.config):
+        with open(args.config) as f:
+            file_config = yaml.safe_load(f) or {}
+            CONFIG["answer_color"] = file_config.get("answer_color")
 
     try:
         creds = load_credentials(args.token)

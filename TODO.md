@@ -71,3 +71,52 @@ All tests should validate the JSON output structure from `process_answers` to co
 - Correct action type for each outline_id
 - Accurate counts in processed/skipped/mismatches/errors arrays
 - Error messages are meaningful when things fail
+
+---
+
+## Replace Logic Brittleness
+
+### HIGH PRIORITY: Indent-based answer detection is fragile
+
+`determine_insertion_point` assumes existing answers are indented MORE than their question (line 312). If someone manually typed an answer without proper indentation, or if the answer was inserted by another tool, it won't be detected as an existing answer - leading to duplicate answers being inserted.
+
+**Fix:** Don't rely solely on indentation. Consider:
+- Any non-bullet paragraph immediately after a question is likely an answer
+- Or use a marker/pattern to identify answers
+
+### Multi-paragraph answers
+
+`determine_insertion_point` only looks at the NEXT paragraph (line 302). If an answer spans multiple paragraphs:
+- Only the first paragraph is detected as "existing answer"
+- `replace_answer` only deletes/replaces that first paragraph
+- Remaining paragraphs are orphaned
+
+**Fix:** Scan forward to find ALL consecutive non-bullet paragraphs that are indented, treat them as a single answer block.
+
+### `replace_answer` doesn't apply styling
+
+Currently `replace_answer` just deletes and inserts plain text. It doesn't:
+- Apply the configured color
+- Set proper indentation
+- Preserve or apply any other formatting
+
+**Fix:** Add `answer_style` config section (all optional, defaults to API behavior):
+
+```yaml
+answer_style:
+  color: blue           # Optional: text color
+  font: Arial           # Optional: font family
+  size: 11              # Optional: font size in pt
+  preserve_existing: false  # Optional: if true, don't restyle existing answers on replace
+```
+
+Each setting is optional. If `answer_style` section is missing or any setting is omitted, use default API behavior (no explicit styling).
+
+### Test coverage for replace scenarios
+
+Need test that:
+1. Creates doc with questions
+2. Fills answers (first pass)
+3. Runs again with DIFFERENT answers
+4. Verifies answers were replaced (not duplicated)
+5. Verifies styling applied correctly

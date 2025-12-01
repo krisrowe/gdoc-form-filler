@@ -17,3 +17,7 @@ questions_file: answers.json
 
 # Path to CSV file for conversion
 csv_file: answers.csv
+
+# Optional: Color for inserted answers (omit or leave blank for default/black)
+# Supported colors: blue, red, green, yellow, cyan, magenta, orange, purple
+# answer_color: blue
