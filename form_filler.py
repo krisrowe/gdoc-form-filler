@@ -286,35 +286,44 @@ def determine_insertion_point(
     """
     Determine where to insert/update the answer for a question.
 
+    Uses character indices (start_index/end_index) from the Google Docs API
+    rather than list positions, so results remain valid after document edits.
+
     Returns:
         (insertion_index, existing_answer_para)
         - insertion_index: character index where new text should be inserted
         - existing_answer_para: if there's an existing answer paragraph, return it
     """
-    q_idx = paragraphs.index(question_para)
+    q_end = question_para["end_index"]
     q_indent = question_para.get("indent_start", 0)
 
-    # Look at the next paragraph
-    if q_idx + 1 >= len(paragraphs):
-        # Question is at the end - insert after it
-        return question_para["end_index"], None
+    # Find the next paragraph by character position (not list index)
+    # This is the paragraph whose start_index is closest to but greater than q_end
+    next_para = None
+    for p in paragraphs:
+        if p["start_index"] >= q_end:
+            if next_para is None or p["start_index"] < next_para["start_index"]:
+                next_para = p
 
-    next_para = paragraphs[q_idx + 1]
+    # No paragraph after this question - insert at end
+    if next_para is None:
+        return q_end, None
 
     # If next paragraph is a bullet, insert between question and next bullet
     if next_para["is_bullet"]:
-        # Insert point is right after the question paragraph
-        return question_para["end_index"], None
+        return q_end, None
 
-    # Next paragraph is not a bullet - check if it's an answer (indented)
+    # Next paragraph is not a bullet - check if it's an existing answer
+    # An answer is typically indented more than the question, or is any
+    # non-bullet paragraph immediately following the question
     next_indent = next_para.get("indent_start", 0)
 
     if next_indent > q_indent:
-        # This appears to be an existing answer
+        # This appears to be an existing answer (indented under question)
         return next_para["start_index"], next_para
 
     # Not indented more - insert after question
-    return question_para["end_index"], None
+    return q_end, None
 
 
 # Named colors mapped to RGB values (0-1 range for Google Docs API)

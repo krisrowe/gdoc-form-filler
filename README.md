@@ -161,7 +161,13 @@ Run `make import-answers` to convert to JSON.
 
 ## Document Structure
 
-The target Google Doc should have a bulleted outline like:
+### Supported Outline Formats
+
+The tool supports two types of outline formatting:
+
+#### 1. Native Google Docs Bullets (Currently Supported)
+
+Documents using Google Docs' built-in numbered list formatting:
 
 ```
 Introduction paragraph...
@@ -176,7 +182,45 @@ Introduction paragraph...
 Conclusion paragraph...
 ```
 
-The script identifies questions by their outline position (1, 2, 3a, 3b, etc.) and optionally validates the question text matches.
+These are created using Format → Bullets & numbering in Google Docs. The API provides a `bullet` property that identifies list items and their nesting level.
+
+#### 2. Text-Based Numbering (Planned)
+
+Documents where numbers/letters are typed directly into paragraph text (common in Word imports or when authors want stable numbering):
+
+```
+1. What is your name?
+2. What company do you work for?
+3. Contact information:
+   a) Email address?
+   b) Phone number?
+4. Additional comments?
+```
+
+**Patterns to be supported:**
+- `1.`, `2.`, `3.` - numbered with period
+- `1)`, `2)`, `3)` - numbered with parenthesis
+- `a.`, `b.`, `c.` - lettered with period
+- `a)`, `b)`, `c)` - lettered with parenthesis
+- `1. a)`, `2. b)` - combined parent and sub-item
+- `i.`, `ii.`, `iii.` - roman numerals
+
+> **Note:** Text-based numbering support is not yet implemented. See TODO.md for details.
+
+### How Outline IDs Work
+
+Each question is identified by an `outline_id` like "1", "2", "3a", "3b":
+
+| Document Position | outline_id |
+|-------------------|------------|
+| First top-level item | `1` |
+| Second top-level item | `2` |
+| Third top-level item | `3` |
+| First sub-item under 3 | `3a` |
+| Second sub-item under 3 | `3b` |
+| Fourth top-level item | `4` |
+
+Your answers JSON/CSV must use these same outline_ids to match questions.
 
 ---
 

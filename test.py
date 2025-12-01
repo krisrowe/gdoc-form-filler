@@ -23,7 +23,11 @@ from googleapiclient.errors import HttpError
 
 # Import our modules
 from analyze import analyze_document, flatten_input_questions, get_document_structure
+import form_filler
 from form_filler import validate_questions, process_answers, flatten_questions
+
+# Set answer color for testing (normally loaded from config.yaml in main())
+form_filler.CONFIG["answer_color"] = "blue"
 
 logging.basicConfig(
     level=logging.INFO,
