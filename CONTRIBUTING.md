@@ -36,14 +36,45 @@ The integration test (`make test`) reuses a single Google Doc to avoid polluting
 - The test clears and rebuilds the document content on each run
 - Only the `documents` scope is required (no `drive.file` scope needed)
 
+### Configuration in Tests
+
+Tests do **not** read from `config.yaml`. Instead, they directly manipulate the `CONFIG` singleton in `form_filler.py`:
+
+```python
+import form_filler
+
+# Set config for this test scenario
+form_filler.CONFIG["answer_color"] = "blue"
+
+# Run test that expects blue-colored answers
+result = process_answers(...)
+
+# Test a different scenario
+form_filler.CONFIG["answer_color"] = None
+
+# Run test that expects default/no color
+result = process_answers(...)
+```
+
+**Why this pattern:**
+- Tests are self-contained, not dependent on external files
+- Each test controls exactly the configuration it needs
+- Multiple configuration scenarios can be tested in one run
+- No risk of test behavior changing based on user's local config
+
+**How it works:**
+- `form_filler.CONFIG` is a module-level dict (singleton)
+- `main()` loads `config.yaml` into this dict for CLI usage
+- Tests set values directly, bypassing file I/O
+
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all tests (uses user_token.json by default)
 make test
 
-# Run with alternative config file
-CONFIG_FILE=config.yaml.example python test.py
+# Use a different token file
+python test.py --token /path/to/token.json
 
 # Future: Run with pytest
 pytest tests/unit/              # Unit tests only (fast)

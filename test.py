@@ -4,9 +4,6 @@ Integration test for gdoc-form-filler.
 
 Reuses a single test Google Doc, clearing and rebuilding its contents each run.
 The doc ID is stored in .test_doc_id (gitignored).
-
-Set CONFIG_FILE env var to use an alternative config file:
-    CONFIG_FILE=config.yaml.example python test.py
 """
 
 import argparse
@@ -15,7 +12,6 @@ import logging
 import os
 import sys
 
-import yaml
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -26,8 +22,12 @@ from analyze import analyze_document, flatten_input_questions, get_document_stru
 import form_filler
 from form_filler import validate_questions, process_answers, flatten_questions
 
-# Set answer color for testing (normally loaded from config.yaml in main())
+# Set config values for testing (normally loaded from config.yaml in main())
+# Tests manipulate CONFIG directly rather than reading config files
 form_filler.CONFIG["answer_color"] = "blue"
+
+# Default token path (can be overridden with --token arg)
+DEFAULT_TOKEN = "user_token.json"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,19 +38,8 @@ logger = logging.getLogger(__name__)
 # Only need docs scope
 SCOPES = ["https://www.googleapis.com/auth/documents"]
 
-# Config file path from env var, defaults to config.yaml
-CONFIG_FILE = os.environ.get("CONFIG_FILE", "config.yaml")
-
 # File to store test doc ID (gitignored)
 TEST_DOC_ID_FILE = ".test_doc_id"
-
-
-def load_config() -> dict:
-    """Load configuration from yaml file."""
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE) as f:
-            return yaml.safe_load(f) or {}
-    return {}
 
 
 def load_test_doc_id() -> str:
@@ -504,17 +493,13 @@ def run_tests(docs_service, doc_id: str) -> dict:
 
 
 def main():
-    # Load config for defaults
-    config = load_config()
-    default_token = config.get("token", "user_token.json")
-
     parser = argparse.ArgumentParser(
         description="Integration test for gdoc-form-filler"
     )
     parser.add_argument(
         "--token",
-        default=default_token,
-        help=f"Path to user_token.json (default: {default_token})"
+        default=DEFAULT_TOKEN,
+        help=f"Path to user_token.json (default: {DEFAULT_TOKEN})"
     )
     parser.add_argument(
         "-v", "--verbose",
@@ -523,8 +508,6 @@ def main():
     )
 
     args = parser.parse_args()
-
-    logger.info(f"Using config: {CONFIG_FILE}")
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
