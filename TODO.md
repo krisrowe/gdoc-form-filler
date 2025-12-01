@@ -511,3 +511,16 @@ Reusable Google Docs API utilities (paragraph handling, bullet management, index
 ### 5. Note: Commit message style
 
 Preference noted during development: do not mention AI tools or code generation in commit messages. Keep commits focused on what changed, not how it was written.
+
+### 6. Consider renaming .env to avoid devws precommit false positives
+
+`devws precommit` scans for values found in `.env` files across the codebase. This causes false positives when documentation examples contain the same values (e.g., `./user_token.json` appearing in both `.env` and `README.md`).
+
+**Potential fix:** Rename `.env` to something like `safe.env` or `local.env` that devws doesn't scan. Would need to update `python-dotenv` load call to specify the filename explicitly:
+
+```python
+from dotenv import load_dotenv
+load_dotenv("safe.env")
+```
+
+This would eliminate false positives while preserving the same functionality.

@@ -57,6 +57,18 @@ Bullet outline IDs (1, 2, 3a, 3b, etc.) are computed based on:
 
 After inserting/deleting content, outline IDs may shift. Always re-fetch document structure after modifications.
 
+## Pre-Commit Notes
+
+When running `devws precommit`, you may see false positive warnings like:
+
+```
+[!] SECRET FOUND: Value from .env (key: GOOGLE_APPLICATION_CREDENTIALS)
+  - Pattern: \./user_token\.json
+  - File:    .env.example
+```
+
+This is a false positive because `./user_token.json` is just a generic file path in documentation/examples, not an actual secret. **Safe to ignore this specific warning only.** Do not ignore other devws precommit findings without investigation.
+
 ## Project Architecture
 
 See `CONTRIBUTING.md` for implementation details and `TODO.md` for planned changes.
