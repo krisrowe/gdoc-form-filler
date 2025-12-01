@@ -1,5 +1,86 @@
 # TODO
 
+## CRITICAL: Support Text-Based Outline Numbering
+
+### Problem
+
+The current implementation **only supports Google Docs native bullet lists**. It relies on the `bullet` property from the Google Docs API to identify questions and compute outline_ids.
+
+Many real-world documents use **text-based numbering** instead:
+- Numbers/letters typed directly into paragraph text: "1.", "2.", "a)", "b)", etc.
+- No native bullet/list formatting from Google Docs
+- Common in documents imported from Word or created by users who want stable numbering
+
+These documents have no `bullet` property in the API response - they're just regular paragraphs that happen to start with "1." or "a)" text.
+
+### Current Behavior
+
+`get_document_structure()` in `form_filler.py`:
+- Checks `para.get("bullet")` to identify list items
+- Only assigns `outline_id` to paragraphs with native bullet formatting
+- Paragraphs with text-based numbering are treated as regular paragraphs with no outline_id
+- `find_question_paragraph()` therefore cannot find these questions
+
+### Required Enhancement
+
+Support **both** outline identification methods:
+
+1. **Native bullets** (current): Use Google Docs API `bullet` property
+2. **Text-based numbering** (new): Parse paragraph text for patterns like:
+   - `1.`, `2.`, `3.` (numbered)
+   - `a)`, `b)`, `c)` or `a.`, `b.`, `c.` (lettered sub-items)
+   - `1. a)` or `1a.` (combined parent + sub-item)
+   - Roman numerals: `i.`, `ii.`, `iii.`
+   - Variations with parentheses, periods, or no punctuation
+
+### Implementation Approach
+
+1. **Detection phase**: Determine which method the document uses
+   - If any paragraph has `bullet` property → use native bullet parsing
+   - Otherwise → use text-based pattern matching
+
+2. **Text pattern parsing**: For text-based documents:
+   ```python
+   # Example patterns to match at start of paragraph text
+   patterns = [
+       r'^(\d+)\.\s*',           # "1. ", "2. "
+       r'^(\d+)\s*\)',           # "1)", "2)"
+       r'^([a-z])\)\s*',         # "a) ", "b) "
+       r'^([a-z])\.\s*',         # "a. ", "b. "
+       r'^(\d+)\.\s*([a-z])\)',  # "1. a)", "2. b)"
+       r'^(\d+)([a-z])\.\s*',    # "1a. ", "2b. "
+   ]
+   ```
+
+3. **Nesting detection**: For text-based numbering, determine hierarchy by:
+   - Indentation level (paragraph indent from API)
+   - Pattern type (numbers = top level, letters = sub-level)
+   - Context from surrounding paragraphs
+
+4. **Unified outline_id**: Both methods should produce the same outline_id format ("1", "2", "3a", "3b") so downstream code works identically.
+
+### Configuration Option
+
+Consider a config option to force a specific mode:
+
+```yaml
+outline_detection:
+  mode: auto    # auto | native_bullets | text_based
+  # auto = detect from document structure
+  # native_bullets = only use Google Docs bullet property
+  # text_based = only parse text patterns
+```
+
+### Test Coverage Needed
+
+1. Document with native Google Docs bullets (current test)
+2. Document with text-based numbering only
+3. Document with mixed formatting (if that's even possible)
+4. Various text patterns: "1.", "1)", "a.", "a)", "1.a)", "1a."
+5. Nested structures detected correctly in text-based mode
+
+---
+
 ## Priority: Confirmed Bugs
 
 ### 1. Document structure corruption after first insert
