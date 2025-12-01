@@ -32,6 +32,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# SUPPRESS "No project ID" WARNING FROM google.auth
+# =============================================================================
+# This suppresses the warning:
+#   "No project ID could be determined. Consider running `gcloud config set project`"
+#
+# WHY IT'S SAFE HERE:
+# - This is a locally-run batch job using only Google Workspace APIs (Docs)
+# - Workspace APIs are free and don't require a quota_project_id
+# - The OAuth client project handles quota tracking automatically
+# - See: https://github.com/krisrowe/gworkspace-access/blob/main/QUOTAS.md
+#
+# DO NOT SUPPRESS THIS WARNING IN:
+# - Server-side applications (may hide real configuration issues)
+# - Reusable libraries or CLI tools (users need to see it)
+# - Applications using paid/client-based APIs (Translation, Vision, etc.)
+#
+# ALTERNATIVES TO SUPPRESSION:
+# - Set GOOGLE_CLOUD_PROJECT environment variable
+# - Use gcloud ADC: gcloud auth application-default set-quota-project PROJECT_ID
+# - Add quota_project_id to your token file manually
+# =============================================================================
+logging.getLogger('google.auth._default').setLevel(logging.ERROR)
+
 # Google Docs API scope
 SCOPES = ["https://www.googleapis.com/auth/documents"]
 
