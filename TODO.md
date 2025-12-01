@@ -81,15 +81,39 @@ outline_detection:
 
 ### Test Document Structure
 
-Google Docs does not support tabs/sheets like Sheets does - each document is a single continuous body. Options for testing both outline types:
+Use a single test document with a reusable test procedure:
 
-1. **Two separate test documents** - one with native bullets, one with text-based numbering. Store both doc IDs in `.test_doc_id` (or separate files like `.test_doc_id_bullets` and `.test_doc_id_text`).
+```python
+def run_test_suite(docs_service, doc_id):
+    """Run tests 1-5 against the current document state."""
+    # Test 1: Parse structure
+    # Test 2: Analyze against expected questions
+    # Test 3: Check outline IDs
+    # Test 4: validate_questions
+    # Test 5: process_answers
+    return results
 
-2. **Single document with sections** - use headings or horizontal rules to separate "Section A: Native Bullets" and "Section B: Text-Based Numbering". Test code would need to know which section to target.
+def main():
+    doc_id = get_or_create_test_doc()
 
-3. **Parameterized test doc creation** - `create_test_document()` accepts a parameter for outline type and builds accordingly.
+    # Round 1: Native bullets
+    clear_document(doc_id)
+    create_test_content(doc_id, outline_type="native_bullets")
+    results_bullets = run_test_suite(docs_service, doc_id)
 
-Option 1 (two documents) is cleanest for isolation. Option 3 is most flexible for CI.
+    # Round 2: Text-based numbering
+    clear_document(doc_id)
+    create_test_content(doc_id, outline_type="text_based")
+    results_text = run_test_suite(docs_service, doc_id)
+
+    # Report combined results
+```
+
+This approach:
+- Reuses single persistent test document
+- Same test logic runs against both outline formats
+- `create_test_content()` accepts outline_type parameter
+- Clear separation between test setup and test execution
 
 ---
 
