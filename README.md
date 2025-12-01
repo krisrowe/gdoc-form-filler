@@ -1,6 +1,6 @@
 # Google Doc Form Filler
 
-Fill answers into a Google Doc structured as a form with numbered/lettered bullet outlines.
+Fill Google Doc questionnaires from structured data (CSV, JSON, etc.).
 
 ## Prerequisites
 
