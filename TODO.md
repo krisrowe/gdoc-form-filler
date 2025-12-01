@@ -49,6 +49,26 @@ After `process_answers` inserts one answer into the document:
 
 The function re-fetches document structure after each edit, but something breaks the outline/bullet structure after the first insertion.
 
+### 3. Test answer appearing at end of document instead of after question
+
+**Symptom:** After running tests, a blue-colored answer paragraph appears at the very end of the document (below the conclusion) instead of immediately after its question.
+
+**Analysis:** The `determine_insertion_point` function uses `paragraphs.index(question_para)` to find the question's position, then looks at `paragraphs[q_idx + 1]` for the "next" paragraph. However, `get_document_structure` returns ALL paragraphs (bullets and non-bullets), so after inserting answers:
+- The paragraph list includes newly inserted answer paragraphs
+- Index arithmetic gets confused when looking for "next paragraph after question"
+- Later questions may find the wrong insertion point
+
+**Related to:** Bug #2 (document structure corruption). Both stem from indices shifting after inserts and the code not correctly accounting for the changed document state.
+
+### 4. Test doesn't set CONFIG["answer_color"]
+
+The test.py calls `process_answers` directly but doesn't set `form_filler.CONFIG["answer_color"]`. The module-level CONFIG only gets populated when running via `main()` which loads config.yaml. Test 5 should set this to actually test colored answer output:
+
+```python
+import form_filler
+form_filler.CONFIG["answer_color"] = "blue"
+```
+
 ---
 
 ## Test Coverage Improvements
@@ -152,3 +172,32 @@ Need test that:
 3. Runs again with DIFFERENT answers
 4. Verifies answers were replaced (not duplicated)
 5. Verifies styling applied correctly
+
+---
+
+## Possible Follow-ups (Require Discussion)
+
+These items came up during development but haven't been reviewed or prioritized yet.
+
+### 1. Test document cleanup behavior
+
+The test currently clears and rebuilds the doc each run, but stale content ("THIS SHOULD BE BLUE") was observed persisting. Need to verify:
+- Is `clear_document` actually clearing everything?
+- Are there edge cases where content survives the clear?
+- Should the test verify the doc is clean before proceeding?
+
+### 2. Test should set CONFIG["answer_color"]
+
+Already documented in Bug #4 above. Decision needed: should test.py load config.yaml, or explicitly set `form_filler.CONFIG["answer_color"]` to test colored output?
+
+### 3. Transfer visualization to CONTRIBUTING.md
+
+Line 40 above notes moving the output structure visualization table to CONTRIBUTING.md for architectural documentation. Not yet done.
+
+### 4. Future: gworkspace-access migration
+
+Reusable Google Docs API utilities (paragraph handling, bullet management, index calculations) could eventually move to the gworkspace-access package. Not immediate - just a future consideration once patterns stabilize.
+
+### 5. Note: Commit message style
+
+Preference noted during development: do not mention AI tools or code generation in commit messages. Keep commits focused on what changed, not how it was written.
