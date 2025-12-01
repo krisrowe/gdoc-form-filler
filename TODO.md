@@ -105,17 +105,22 @@ Currently `replace_answer` just deletes and inserts plain text. It doesn't:
 - This applies to both replaced answers AND existing answers that match (no_change)
 - Indentation fix is structural correctness, not styling
 
-**Fix:** Add `answer_style` config section (all optional, defaults to API behavior):
+**Fix:** Add `answer_format` config section (all optional, defaults to API behavior):
 
 ```yaml
-answer_style:
-  color: blue           # Optional: text color
-  font: Arial           # Optional: font family
-  size: 11              # Optional: font size in pt
-  restyle_existing: false  # Optional: if true, apply color/font/size to existing answers
+answer_format:
+  style:
+    color: blue           # Optional: text color
+    font: Arial           # Optional: font family
+    size: 11              # Optional: font size in pt
+    restyle_existing: false  # Optional: if true, apply style to existing answers
+  indentation:
+    enabled: true         # Optional: default true, always fix indentation
+    offset: 36            # Optional: points to indent BEYOND question indent (default 36pt)
+                          # e.g., if question is at 36pt, answer will be at 72pt
 ```
 
-Each setting is optional. If `answer_style` section is missing or any setting is omitted, use default API behavior (no explicit styling). Note: indentation is always enforced regardless of `restyle_existing`.
+The entire `answer_format` section is optional. Each sub-section (`style`, `indentation`) is optional. Each individual setting is optional. If missing, use defaults (indentation enabled at 36pt offset, no explicit styling).
 
 ### Report array of actions per question
 
