@@ -4,33 +4,78 @@
 
 ### 1. Document structure corruption after first insert
 
-After `process_answers` inserts one answer into the document:
-- Subsequent outline ID lookups fail
+**Behavior observed:**
+- After `process_answers` inserts the first answer into the document, subsequent operations fail
+- Outline ID lookups return wrong paragraphs (e.g., looking for outline "4" returns question 3's text "Contact Information")
+- Sub-bullet outline_ids (3a, 3b, 3c) disappear from the parsed structure entirely
 - Validation text no longer matches expected paragraphs
-- Sub-bullet outline_ids (3a, 3b, 3c) disappear from the parsed structure
-- Example: Outline 4 paragraph text becomes "Contact Information" (question 3's text)
+- The function re-fetches document structure after each edit via `get_document_structure()`, but the returned structure is corrupted
 
-The function re-fetches document structure after each edit, but something breaks the outline/bullet structure after the first insertion.
+**Root cause analysis:**
+The issue is in `find_question_paragraph()` at `form_filler.py:269`. After an insert, we re-fetch the document and search for the outline_id. However:
+1. `get_document_structure()` computes outline_ids based on bullet nesting and sequence
+2. When we insert a non-bullet answer paragraph, it doesn't affect bullet numbering
+3. BUT the `paragraphs` list now contains additional entries (the inserted answers)
+4. `determine_insertion_point()` uses `paragraphs.index(question_para)` to find position
+5. This index is into the NEW paragraphs list, which has different positions than before
+
+**Proposed fix:**
+Option A: Only track bullet paragraphs in the list used for index arithmetic, keep non-bullets separate
+Option B: Use `start_index`/`end_index` (character positions) instead of list indices for insertion point calculation
+Option C: Store the question's character `end_index` at lookup time, use that directly for insertion
 
 ### 2. Answer inserted at end of document instead of after question
 
-**Symptom:** After running tests, a blue-colored answer paragraph appears at the very end of the document (below the conclusion) instead of immediately after its question.
+**Behavior observed:**
+- Running `make test` results in answer text appearing at the very end of the document
+- The answer appears below the "Conclusion" paragraph instead of after its question
+- Answer has blue color applied (so `insert_answer` ran), but at wrong location
+- Specifically observed: "THIS SHOULD BE BLUE" at document end (from debug/test session)
 
-**Analysis:** The `determine_insertion_point` function uses `paragraphs.index(question_para)` to find the question's position, then looks at `paragraphs[q_idx + 1]` for the "next" paragraph. However, `get_document_structure` returns ALL paragraphs (bullets and non-bullets), so after inserting answers:
-- The paragraph list includes newly inserted answer paragraphs
-- Index arithmetic gets confused when looking for "next paragraph after question"
-- Later questions may find the wrong insertion point
+**Root cause analysis:**
+In `determine_insertion_point()` at `form_filler.py:282-317`:
 
-**Related to:** Bug #1 above. Both stem from indices shifting after inserts and the code not correctly accounting for the changed document state.
+```python
+q_idx = paragraphs.index(question_para)  # Line 294
+# ...
+next_para = paragraphs[q_idx + 1]  # Line 302
+```
+
+The code finds the question in the `paragraphs` list, then looks at `q_idx + 1` to check the "next" paragraph. Problems:
+
+1. `paragraphs` contains ALL paragraphs (intro, bullets, answers, conclusion)
+2. After inserting answer for question 1, the list has a new paragraph between Q1 and Q2
+3. When processing question 2, `q_idx + 1` might now point to the answer we just inserted for Q1
+4. The logic then incorrectly determines insertion point based on this wrong "next" paragraph
+5. In worst case, the calculated `insert_idx` points to end of document
+
+**Related to:** Bug #1 - both stem from using list indices that become stale after document modifications.
+
+**Proposed fix:**
+Same as Bug #1 - use character indices (`start_index`/`end_index`) from the API rather than list position arithmetic. The character indices are absolute positions in the document that remain valid references even after we re-fetch structure.
 
 ### 3. Test doesn't set CONFIG["answer_color"]
 
-The test.py calls `process_answers` directly but doesn't set `form_filler.CONFIG["answer_color"]`. The module-level CONFIG only gets populated when running via `main()` which loads config.yaml. Test 5 should set this to actually test colored answer output:
+**Behavior observed:**
+- Test 5 in `test.py` calls `process_answers()` directly
+- Answers are inserted but without color styling
+- The `answer_color` config is never applied during tests
+
+**Root cause analysis:**
+- `form_filler.CONFIG` is a module-level dict initialized with `{"answer_color": None}`
+- `CONFIG["answer_color"]` is only populated in `main()` when loading `config.yaml`
+- `test.py` imports `process_answers` and calls it directly, bypassing `main()`
+- Therefore `CONFIG["answer_color"]` remains `None` and no color is applied
+
+**Fix:**
+In `test.py`, before calling `process_answers()`, set the config:
 
 ```python
 import form_filler
 form_filler.CONFIG["answer_color"] = "blue"
 ```
+
+Alternatively, have `test.py` load `config.yaml` the same way `main()` does, but explicit setting is cleaner for tests.
 
 ---
 
