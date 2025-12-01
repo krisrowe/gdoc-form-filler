@@ -32,9 +32,10 @@ make setup
 gcloud auth application-default login --scopes=https://www.googleapis.com/auth/documents
 ```
 
-**3. Test** (reuses persistent test doc)
+**3. Test**
 ```bash
-make test
+pytest          # Runs unit tests (fast, no credentials needed)
+make test-all   # Runs all tests including integration (needs credentials)
 ```
 
 **4. Import your answers from CSV**
@@ -132,7 +133,9 @@ Requires domain-wide delegation configured by your Workspace admin.
 | Command | Description |
 |---------|-------------|
 | `make setup` | Install dependencies, create config.yaml |
-| `make test` | Run integration test |
+| `make test` | Run unit tests (fast, no credentials) |
+| `make test-all` | Run all tests (unit + integration) |
+| `make test-integration` | Run integration tests only |
 | `make import-answers` | Convert CSV to JSON |
 | `make analyze` | Analyze doc structure against expected questions |
 | `make analyze-dump` | Dump raw document structure (debugging) |

@@ -226,11 +226,52 @@ class TestNativeBullets:
 
 Tests run in order (alphabetically by method name). Shared `test_doc` fixture provides same document to all tests in the module.
 
-### When to Refactor
+### Key Implementation Guidelines
 
-- After text-based outline support is added (need two test modules)
-- When adding unit tests for isolated functions
-- If test complexity grows beyond current single-file approach
+**Integration tests (`tests/integration/`):**
+- Mirror exactly what test.py covered - no more, no less
+- Same test cases, same assertions, just pytest format
+- Network I/O is acceptable here (Google Docs API calls)
+- Use module-scoped fixtures for efficiency (share docs_service, test_doc)
+- Run both native_bullets and text_based outline types
+
+**Unit tests (`tests/unit/`):**
+- No network I/O - pure function testing
+- Good candidates: `flatten_questions()`, `generate_report()`, outline parsing
+- Can add more granular test cases than integration tests
+- Fast to run, no credentials needed
+
+**Makefile targets:**
+- `make test` - runs ALL tests (unit + integration) via pytest
+- `make test-unit` - runs only unit tests (fast, no network)
+- `make test-integration` - runs only integration tests
+
+**Migration steps:**
+1. Create tests/integration/ with conftest.py and test files
+2. Create tests/unit/ for non-network function tests
+3. Update Makefile to use pytest
+4. Verify pytest runs produce same coverage as old test.py
+5. Delete old test.py after verification
+
+### Expand Unit Test Coverage
+
+Identify additional functions that can be tested without network I/O:
+- Outline parsing logic (text pattern matching)
+- Answer insertion point detection (with mock document structure)
+- Validation logic (comparing input vs doc structure)
+- get_output_filename() and timestamp formatting
+
+Goal: Move as much logic as possible to unit tests for faster feedback.
+
+### Future: Mocked Integration Tests
+
+Add `tests/mocked/` for end-to-end workflow tests using mocked Google API responses:
+- Use `unittest.mock` or `responses` library to mock HTTP calls
+- Test full workflows (validate → process → report) without network I/O
+- Cover error handling paths that are hard to trigger with real API
+- Runs as part of `pytest` (safe default), not `test-integration`
+
+This provides integration-level confidence with unit-test speed and isolation.
 
 ---
 

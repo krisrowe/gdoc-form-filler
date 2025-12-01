@@ -1,4 +1,4 @@
-.PHONY: help test analyze fill import-answers setup clean check-access
+.PHONY: help test test-all test-integration analyze fill import-answers setup clean check-access
 
 CONFIG := config.yaml
 PYTHON := python3
@@ -15,15 +15,17 @@ CSV_FILE := $(or $(CSV_FILE),answers.csv)
 help:
 	@echo "gdoc-form-filler commands:"
 	@echo ""
-	@echo "  make setup        - Install dependencies and create config.yaml"
-	@echo "  make check-access - Check Application Default Credentials for Docs API"
-	@echo "  make test         - Run integration test (reuses test doc)"
-	@echo "  make analyze      - Analyze doc against expected questions"
-	@echo "  make analyze-dump - Dump document structure (for debugging)"
-	@echo "  make fill         - Fill answers into document (dry-run)"
-	@echo "  make fill-apply   - Fill answers into document (actually apply)"
-	@echo "  make import-answers - Import answers from CSV to JSON"
-	@echo "  make clean        - Remove generated files"
+	@echo "  make setup            - Install dependencies and create config.yaml"
+	@echo "  make check-access     - Check Application Default Credentials for Docs API"
+	@echo "  make test             - Run unit tests (fast, no network, safe default)"
+	@echo "  make test-all         - Run all tests (unit + integration)"
+	@echo "  make test-integration - Run integration tests (requires credentials)"
+	@echo "  make analyze          - Analyze doc against expected questions"
+	@echo "  make analyze-dump     - Dump document structure (for debugging)"
+	@echo "  make fill             - Fill answers into document (dry-run)"
+	@echo "  make fill-apply       - Fill answers into document (actually apply)"
+	@echo "  make import-answers   - Import answers from CSV to JSON"
+	@echo "  make clean            - Remove generated files"
 	@echo ""
 	@echo "Configuration: $(CONFIG)"
 	@echo "  doc_id:         $(DOC_ID)"
@@ -53,7 +55,13 @@ check-access:
 	fi
 
 test:
-	CONFIG_FILE=config.yaml.example $(PYTHON) test.py
+	$(PYTHON) -m pytest
+
+test-all:
+	$(PYTHON) -m pytest tests/
+
+test-integration:
+	$(PYTHON) -m pytest tests/integration/
 
 analyze: config.yaml
 	@if [ "$(DOC_ID)" = "YOUR_DOCUMENT_ID_HERE" ] || [ -z "$(DOC_ID)" ]; then \

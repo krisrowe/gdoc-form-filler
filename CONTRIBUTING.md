@@ -16,10 +16,10 @@ tests/
 ### Test Guidelines
 
 **Unit tests** (`tests/unit/`):
-- Must be fully isolated - no network calls, no file I/O
-- Mock all external dependencies
+- Must be fully isolated - no network calls
+- Test pure functions directly (no mocking needed currently)
 - Can run in any order, in parallel
-- Fast execution (< 1 second per test)
+- Fast execution (< 1 second total)
 
 **Integration tests** (`tests/integration/`):
 - Test real interaction with Google Docs API
@@ -70,14 +70,16 @@ result = process_answers(...)
 ### Running Tests
 
 ```bash
-# Run all tests (uses user_token.json by default)
+# Default: run unit tests only (fast, no credentials needed)
+pytest
 make test
 
-# Use a different token file
-python test.py --token /path/to/token.json
+# Run all tests (unit + integration)
+make test-all
 
-# Future: Run with pytest
-pytest tests/unit/              # Unit tests only (fast)
-pytest tests/integration/       # Integration tests only
-pytest                          # All tests
+# Run integration tests only (requires credentials)
+make test-integration
+pytest tests/integration/
 ```
+
+**Safe defaults:** Running `pytest` or `make test` with no arguments only runs unit tests. This allows anyone to clone the repo and run tests immediately without configuring credentials. Integration tests require Google Docs API credentials and are explicitly invoked.
