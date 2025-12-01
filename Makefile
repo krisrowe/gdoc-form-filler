@@ -1,4 +1,4 @@
-.PHONY: help test test-keep analyze fill import-answers setup clean
+.PHONY: help test analyze fill import-answers setup clean
 
 CONFIG := config.yaml
 PYTHON := python3
@@ -18,8 +18,7 @@ help:
 	@echo "gdoc-form-filler commands:"
 	@echo ""
 	@echo "  make setup       - Install dependencies and create config.yaml"
-	@echo "  make test        - Run integration test (creates and deletes temp doc)"
-	@echo "  make test-keep   - Run test but keep the document"
+	@echo "  make test        - Run integration test (reuses test doc)"
 	@echo "  make analyze     - Analyze doc against expected questions"
 	@echo "  make analyze-dump - Dump document structure (for debugging)"
 	@echo "  make fill        - Fill answers into document (dry-run)"
@@ -45,11 +44,8 @@ config.yaml:
 		echo "Created config.yaml from config.yaml.example"; \
 	fi
 
-test: config.yaml
-	$(PYTHON) test.py --token $(TOKEN)
-
-test-keep: config.yaml
-	$(PYTHON) test.py --token $(TOKEN) --keep
+test:
+	CONFIG_FILE=config.yaml.example $(PYTHON) test.py
 
 analyze: config.yaml
 	@if [ "$(DOC_ID)" = "YOUR_DOCUMENT_ID_HERE" ] || [ -z "$(DOC_ID)" ]; then \

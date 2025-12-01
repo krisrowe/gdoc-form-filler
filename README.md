@@ -2,6 +2,24 @@
 
 Fill answers into a Google Doc structured as a form with numbered/lettered bullet outlines.
 
+## Prerequisites
+
+Before starting, enable the Google Docs API in the same Google Cloud project used for your `client_creds.json`:
+
+```bash
+# Find your project ID in client_creds.json under "project_id"
+gcloud services enable docs.googleapis.com --project=YOUR_PROJECT_ID
+```
+
+Or enable it via the [Google Cloud Console](https://console.cloud.google.com/apis/library/docs.googleapis.com).
+
+**Requirements:**
+- Python 3.10+
+- [gwsa](https://github.com/krisrowe/gworkspace-access) CLI for OAuth token generation
+- Google Cloud project with Docs API enabled (as shown above)
+
+The OAuth token will allow access to any Google Doc that the authenticated user has permission to view or edit.
+
 ## Quick Start
 
 **1. Setup**
@@ -39,12 +57,6 @@ make fill-apply   # Apply changes
 ```
 
 ---
-
-## Prerequisites
-
-- Python 3.10+
-- [gwsa](https://github.com/krisrowe/gworkspace-access) CLI for OAuth token generation
-- Google Cloud project with Docs API enabled
 
 ## Installation
 

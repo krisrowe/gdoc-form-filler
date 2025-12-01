@@ -2,8 +2,11 @@
 """
 Integration test for gdoc-form-filler.
 
-Creates a temporary Google Doc with a structured outline,
-runs analyze.py against it, then deletes the doc.
+Reuses a single test Google Doc, clearing and rebuilding its contents each run.
+The doc ID is stored in config.yaml under test_doc_id.
+
+Set CONFIG_FILE env var to use an alternative config file:
+    CONFIG_FILE=config.yaml.example python test.py
 """
 
 import argparse
@@ -11,8 +14,8 @@ import json
 import logging
 import os
 import sys
-import tempfile
 
+import yaml
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -20,6 +23,7 @@ from googleapiclient.errors import HttpError
 
 # Import our modules
 from analyze import analyze_document, flatten_input_questions, get_document_structure
+from form_filler import run_form_filler, flatten_questions
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,11 +31,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Need both docs and drive scopes
-SCOPES = [
-    "https://www.googleapis.com/auth/documents",
-    "https://www.googleapis.com/auth/drive.file"
-]
+# Only need docs scope
+SCOPES = ["https://www.googleapis.com/auth/documents"]
+
+# Config file path from env var, defaults to config.yaml
+CONFIG_FILE = os.environ.get("CONFIG_FILE", "config.yaml")
+
+# File to store test doc ID (gitignored)
+TEST_DOC_ID_FILE = ".test_doc_id"
+
+
+def load_config() -> dict:
+    """Load configuration from yaml file."""
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE) as f:
+            return yaml.safe_load(f) or {}
+    return {}
+
+
+def load_test_doc_id() -> str:
+    """Load test doc ID from file."""
+    if os.path.exists(TEST_DOC_ID_FILE):
+        with open(TEST_DOC_ID_FILE) as f:
+            return f.read().strip()
+    return None
+
+
+def save_test_doc_id(doc_id: str) -> None:
+    """Save test doc ID to file."""
+    with open(TEST_DOC_ID_FILE, 'w') as f:
+        f.write(doc_id)
 
 
 def load_credentials(token_path: str) -> Credentials:
@@ -70,21 +99,9 @@ TEST_QUESTIONS = {
             "id": "3",
             "question": "Contact Information",
             "questions": [
-                {
-                    "id": "a",
-                    "question": "Email address",
-                    "answer": "john@example.com"
-                },
-                {
-                    "id": "b",
-                    "question": "Phone number",
-                    "answer": "555-123-4567"
-                },
-                {
-                    "id": "c",
-                    "question": "Mailing address",
-                    "answer": "123 Main St, Anytown, USA"
-                }
+                {"id": "a", "question": "Email address", "answer": "john@example.com"},
+                {"id": "b", "question": "Phone number", "answer": "555-123-4567"},
+                {"id": "c", "question": "Mailing address", "answer": "123 Main St"}
             ]
         },
         {
@@ -94,37 +111,100 @@ TEST_QUESTIONS = {
         },
         {
             "id": "5",
-            "question": "Additional comments or notes",
-            "answer": "None at this time"
+            "question": "Additional comments",
+            "answer": "None"
         }
     ]
 }
 
 
-def create_test_document(docs_service) -> str:
+def get_expected_outline_ids() -> list[str]:
+    """Get list of expected outline IDs from TEST_QUESTIONS."""
+    ids = []
+    for q in TEST_QUESTIONS["questions"]:
+        ids.append(q["id"])
+        if "questions" in q:
+            for sub in q["questions"]:
+                ids.append(f"{q['id']}{sub['id']}")
+    return ids
+
+
+def get_expected_bullet_count() -> int:
+    """Count total bullets expected from TEST_QUESTIONS."""
+    count = 0
+    for q in TEST_QUESTIONS["questions"]:
+        count += 1
+        if "questions" in q:
+            count += len(q["questions"])
+    return count
+
+
+def check_doc_exists(docs_service, doc_id: str) -> bool:
+    """Check if a document exists and is accessible."""
+    try:
+        docs_service.documents().get(documentId=doc_id).execute()
+        return True
+    except HttpError as e:
+        if e.resp.status in [404, 403]:
+            return False
+        raise
+
+
+def clear_document(docs_service, doc_id: str) -> None:
+    """Clear all content from a document."""
+    doc = docs_service.documents().get(documentId=doc_id).execute()
+    content = doc.get("body", {}).get("content", [])
+
+    if len(content) <= 1:
+        return  # Already empty (just the initial newline)
+
+    # Get the range to delete (from index 1 to end-1)
+    end_index = content[-1].get("endIndex", 1) - 1
+    if end_index <= 1:
+        return
+
+    requests = [{
+        "deleteContentRange": {
+            "range": {
+                "startIndex": 1,
+                "endIndex": end_index
+            }
+        }
+    }]
+
+    docs_service.documents().batchUpdate(
+        documentId=doc_id,
+        body={"requests": requests}
+    ).execute()
+    logger.info(f"Cleared document content")
+
+
+def create_test_document(docs_service, existing_doc_id: str = None) -> str:
     """
-    Create a test Google Doc with structured outline.
+    Create or reuse a test Google Doc with structured outline.
     Returns the document ID.
     """
-    # Create empty document
-    doc = docs_service.documents().create(body={
-        "title": "gdoc-form-filler Test Document (temporary)"
-    }).execute()
-    doc_id = doc["documentId"]
-    logger.info(f"Created test document: {doc_id}")
+    if existing_doc_id:
+        doc_id = existing_doc_id
+        logger.info(f"Reusing existing test document: {doc_id}")
+        clear_document(docs_service, doc_id)
+    else:
+        # Create empty document
+        doc = docs_service.documents().create(body={
+            "title": "gdoc-form-filler Test Document"
+        }).execute()
+        doc_id = doc["documentId"]
+        logger.info(f"Created new test document: {doc_id}")
 
-    # Build the document content with batchUpdate
-    requests = []
-
-    # We insert in reverse order since each insert pushes content down
+    # Build content structure
     # Final structure:
     # - Intro paragraph
     # - Question 1 (bullet)
     # - Question 2 (bullet)
     # - Question 3 (bullet)
-    #   - 3a (sub-bullet)
-    #   - 3b (sub-bullet)
-    #   - 3c (sub-bullet)
+    #   a. sub-bullet
+    #   b. sub-bullet
+    #   c. sub-bullet
     # - Question 4 (bullet)
     # - Question 5 (bullet)
     # - Conclusion paragraph
@@ -137,7 +217,7 @@ def create_test_document(docs_service) -> str:
         "text": "Introduction\n\nThis is a test form document. Please answer all questions below to the best of your ability. Your responses will be kept confidential.\n\n"
     })
 
-    # Questions as bullets
+    # Questions as bullets with sub-bullets
     for q in TEST_QUESTIONS["questions"]:
         content_parts.append({
             "type": "bullet",
@@ -175,7 +255,7 @@ def create_test_document(docs_service) -> str:
             bullet_ranges.append({
                 "start": current_index,
                 "end": current_index + len(text),
-                "level": part["level"]
+                "level": part.get("level", 0)
             })
         current_index += len(text)
 
@@ -185,47 +265,51 @@ def create_test_document(docs_service) -> str:
         body={"requests": text_insertions}
     ).execute()
 
-    # Now apply bullet formatting
     if bullet_ranges:
-        bullet_requests = []
+        # Step 1: Set indentation for nested items BEFORE applying bullets
+        indent_requests = []
         for br in bullet_ranges:
-            bullet_requests.append({
-                "createParagraphBullets": {
-                    "range": {
-                        "startIndex": br["start"],
-                        "endIndex": br["end"]
-                    },
-                    "bulletPreset": "NUMBERED_DECIMAL_NESTED"
-                }
-            })
-            # Set nesting level if sub-bullet
             if br["level"] > 0:
-                bullet_requests.append({
+                indent_requests.append({
                     "updateParagraphStyle": {
                         "range": {
                             "startIndex": br["start"],
                             "endIndex": br["end"]
                         },
                         "paragraphStyle": {
-                            "indentStart": {"magnitude": 36 * (br["level"] + 1), "unit": "PT"},
-                            "indentFirstLine": {"magnitude": 18 * (br["level"] + 1), "unit": "PT"}
+                            "indentStart": {"magnitude": 36 * br["level"], "unit": "PT"},
+                            "indentFirstLine": {"magnitude": 36 * br["level"], "unit": "PT"}
                         },
                         "fields": "indentStart,indentFirstLine"
                     }
                 })
 
+        if indent_requests:
+            docs_service.documents().batchUpdate(
+                documentId=doc_id,
+                body={"requests": indent_requests}
+            ).execute()
+
+        # Step 2: Apply bullets to all at once
+        all_start = min(br["start"] for br in bullet_ranges)
+        all_end = max(br["end"] for br in bullet_ranges)
+
         docs_service.documents().batchUpdate(
             documentId=doc_id,
-            body={"requests": bullet_requests}
+            body={"requests": [{
+                "createParagraphBullets": {
+                    "range": {
+                        "startIndex": all_start,
+                        "endIndex": all_end
+                    },
+                    "bulletPreset": "NUMBERED_DECIMAL_ALPHA_ROMAN"
+                }
+            }]}
         ).execute()
 
     return doc_id
 
 
-def delete_document(drive_service, doc_id: str) -> None:
-    """Delete a document using Drive API."""
-    drive_service.files().delete(fileId=doc_id).execute()
-    logger.info(f"Deleted test document: {doc_id}")
 
 
 def run_tests(docs_service, doc_id: str) -> dict:
@@ -236,20 +320,22 @@ def run_tests(docs_service, doc_id: str) -> dict:
         "errors": []
     }
 
+    expected_count = get_expected_bullet_count()
+    expected_ids = get_expected_outline_ids()
+
     # Test 1: Get document structure
     logger.info("Test 1: Parsing document structure...")
     try:
         paragraphs = get_document_structure(docs_service, doc_id)
         bullet_count = len(paragraphs)
-        expected_bullets = 8  # 5 top-level + 3 sub-bullets
 
-        if bullet_count >= 5:  # At least the main questions
-            logger.info(f"  PASS: Found {bullet_count} bullet paragraphs")
+        if bullet_count == expected_count:
+            logger.info(f"  PASS: Found {bullet_count} bullet paragraphs (expected {expected_count})")
             results["passed"] += 1
         else:
-            logger.error(f"  FAIL: Expected at least 5 bullets, found {bullet_count}")
+            logger.error(f"  FAIL: Expected {expected_count} bullets, found {bullet_count}")
             results["failed"] += 1
-            results["errors"].append(f"Bullet count: expected >=5, got {bullet_count}")
+            results["errors"].append(f"Bullet count: expected {expected_count}, got {bullet_count}")
     except Exception as e:
         logger.error(f"  ERROR: {e}")
         results["failed"] += 1
@@ -267,19 +353,18 @@ def run_tests(docs_service, doc_id: str) -> dict:
         logger.info(f"  Found: {found_count}/{len(analysis)}")
         logger.info(f"  Matched: {matched_count}/{len(analysis)}")
 
-        if found_count >= 5:  # At least main questions found
-            logger.info("  PASS: Main questions found")
+        if found_count == len(analysis):
+            logger.info("  PASS: All questions found")
             results["passed"] += 1
         else:
-            logger.error(f"  FAIL: Expected at least 5 questions found")
+            logger.error(f"  FAIL: Expected {len(analysis)} questions found, got {found_count}")
             results["failed"] += 1
 
-        if matched_count >= 5:
-            logger.info("  PASS: Question text matched")
+        if matched_count == len(analysis):
+            logger.info("  PASS: All question text matched")
             results["passed"] += 1
         else:
-            logger.warning(f"  WARN: Only {matched_count} questions matched text")
-            # Don't fail on this - bullet formatting may affect matching
+            logger.warning(f"  WARN: Only {matched_count}/{len(analysis)} questions matched text")
 
     except Exception as e:
         logger.error(f"  ERROR: {e}")
@@ -292,21 +377,71 @@ def run_tests(docs_service, doc_id: str) -> dict:
         paragraphs = get_document_structure(docs_service, doc_id)
         outline_ids = [p["outline_id"] for p in paragraphs]
 
-        # Should have at least 1, 2, 3, 4, 5
-        expected_ids = ["1", "2", "3", "4", "5"]
         found_ids = [oid for oid in expected_ids if oid in outline_ids]
 
         if len(found_ids) == len(expected_ids):
-            logger.info(f"  PASS: All main outline IDs found: {found_ids}")
+            logger.info(f"  PASS: All expected outline IDs found: {found_ids}")
             results["passed"] += 1
         else:
-            missing = set(expected_ids) - set(found_ids)
+            missing = set(expected_ids) - set(outline_ids)
             logger.error(f"  FAIL: Missing outline IDs: {missing}")
             results["failed"] += 1
             results["errors"].append(f"Missing outline IDs: {missing}")
 
-        # Log all found IDs for debugging
-        logger.info(f"  All outline IDs: {outline_ids}")
+        logger.info(f"  Expected: {expected_ids}")
+        logger.info(f"  Found: {outline_ids}")
+
+    except Exception as e:
+        logger.error(f"  ERROR: {e}")
+        results["failed"] += 1
+        results["errors"].append(str(e))
+
+    # Test 4: Validate using form_filler's run_form_filler
+    logger.info("Test 4: Testing form_filler validation (dry-run)...")
+    try:
+        answers = flatten_questions(TEST_QUESTIONS)
+        filler_results = run_form_filler(docs_service, doc_id, answers, dry_run=True)
+
+        validation = filler_results["validation"]
+        processing = filler_results["processing"]
+        errors = []
+
+        # Check counts match
+        if validation["doc_question_count"] != expected_count:
+            errors.append(f"doc_question_count: expected {expected_count}, got {validation['doc_question_count']}")
+
+        if validation["input_question_count"] != expected_count:
+            errors.append(f"input_question_count: expected {expected_count}, got {validation['input_question_count']}")
+
+        # Check no missing questions
+        if validation["missing_in_doc"]:
+            errors.append(f"missing_in_doc: {validation['missing_in_doc']}")
+
+        if validation["missing_in_input"]:
+            errors.append(f"missing_in_input: {validation['missing_in_input']}")
+
+        # Check no text mismatches
+        if validation["text_mismatches"]:
+            errors.append(f"text_mismatches: {validation['text_mismatches']}")
+
+        # Check doc_ids match expected
+        if sorted(validation["doc_ids"]) != sorted(expected_ids):
+            errors.append(f"doc_ids mismatch: expected {expected_ids}, got {validation['doc_ids']}")
+
+        # Check processing had no errors
+        if processing["errors"]:
+            errors.append(f"processing errors: {processing['errors']}")
+
+        if errors:
+            for err in errors:
+                logger.error(f"  FAIL: {err}")
+            results["failed"] += 1
+            results["errors"].extend(errors)
+        else:
+            logger.info(f"  PASS: form_filler validation found no discrepancies")
+            logger.info(f"    doc_ids: {validation['doc_ids']}")
+            logger.info(f"    would_insert: {len([p for p in processing['processed'] if p.get('action') == 'would_insert'])}")
+            results["passed"] += 1
 
     except Exception as e:
         logger.error(f"  ERROR: {e}")
@@ -317,18 +452,17 @@ def run_tests(docs_service, doc_id: str) -> dict:
 
 
 def main():
+    # Load config for defaults
+    config = load_config()
+    default_token = config.get("token", "user_token.json")
+
     parser = argparse.ArgumentParser(
         description="Integration test for gdoc-form-filler"
     )
     parser.add_argument(
         "--token",
-        default="user_token.json",
-        help="Path to user_token.json (default: user_token.json)"
-    )
-    parser.add_argument(
-        "--keep", "-k",
-        action="store_true",
-        help="Keep the test document (don't delete), prints URL to stdout"
+        default=default_token,
+        help=f"Path to user_token.json (default: {default_token})"
     )
     parser.add_argument(
         "-v", "--verbose",
@@ -338,21 +472,35 @@ def main():
 
     args = parser.parse_args()
 
+    logger.info(f"Using config: {CONFIG_FILE}")
+
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
-
-    doc_id = None
 
     try:
         creds = load_credentials(args.token)
         docs_service = build("docs", "v1", credentials=creds)
-        drive_service = build("drive", "v3", credentials=creds)
 
-        # Create test document
+        # Check for existing test doc
+        existing_doc_id = load_test_doc_id()
+        doc_id = None
+
         logger.info("=" * 60)
-        logger.info("Creating test document...")
-        doc_id = create_test_document(docs_service)
+        if existing_doc_id:
+            if check_doc_exists(docs_service, existing_doc_id):
+                doc_id = existing_doc_id
+            else:
+                logger.warning(f"Test doc {existing_doc_id} not found/accessible, creating new one")
+
+        # Create or reuse test document
+        doc_id = create_test_document(docs_service, doc_id)
         doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
+
+        # Save doc_id if new
+        if doc_id != existing_doc_id:
+            save_test_doc_id(doc_id)
+            logger.info(f"Saved test_doc_id to {TEST_DOC_ID_FILE}")
+
         logger.info(f"Document ID: {doc_id}")
         logger.info("=" * 60)
 
@@ -372,27 +520,13 @@ def main():
             for err in results["errors"]:
                 logger.info(f"  - {err}")
 
-        # Cleanup
-        if not args.keep:
-            logger.info("\nCleaning up...")
-            delete_document(drive_service, doc_id)
-        else:
-            doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
-            logger.info("\nKeeping document.")
-            # Print URL to stdout (not stderr) for easy copying
-            print(f"\n{doc_url}\n")
+        # Print URL to stdout for easy access
+        print(f"\n{doc_url}\n")
 
         return 0 if results["failed"] == 0 else 1
 
     except HttpError as e:
         logger.error(f"Google API error: {e}")
-        # Try to clean up on error
-        if doc_id and not args.keep:
-            try:
-                drive_service = build("drive", "v3", credentials=creds)
-                delete_document(drive_service, doc_id)
-            except:
-                logger.warning(f"Failed to delete test doc: {doc_id}")
         return 1
     except Exception as e:
         logger.error(f"Error: {e}")

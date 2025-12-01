@@ -8,6 +8,7 @@ client_secrets.json
 *.json
 *.csv
 *.yaml
+.test_doc_id
 !*.example
 
 # Python

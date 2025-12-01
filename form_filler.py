@@ -7,6 +7,7 @@ and fills in answers based on an input JSON file keyed by outline position.
 """
 
 import argparse
+from datetime import datetime
 import json
 import logging
 import os
@@ -62,28 +63,28 @@ def flatten_questions(data: dict) -> list[dict]:
         for q in data["questions"]:
             main_id = str(q.get("id", ""))
 
-            # Top-level answer
+            # Top-level question (include even without answer for validation)
+            entry = {
+                "outline_id": main_id,
+            }
             if "answer" in q:
-                entry = {
-                    "outline_id": main_id,
-                    "answer": q["answer"]
-                }
-                if "question" in q:
-                    entry["validation_text"] = q["question"]
-                answers.append(entry)
+                entry["answer"] = q["answer"]
+            if "question" in q:
+                entry["validation_text"] = q["question"]
+            answers.append(entry)
 
             # Nested sub-questions
             if "questions" in q and isinstance(q["questions"], list):
                 for sub_q in q["questions"]:
                     sub_id = str(sub_q.get("id", ""))
+                    sub_entry = {
+                        "outline_id": f"{main_id}{sub_id}",
+                    }
                     if "answer" in sub_q:
-                        entry = {
-                            "outline_id": f"{main_id}{sub_id}",
-                            "answer": sub_q["answer"]
-                        }
-                        if "question" in sub_q:
-                            entry["validation_text"] = sub_q["question"]
-                        answers.append(entry)
+                        sub_entry["answer"] = sub_q["answer"]
+                    if "question" in sub_q:
+                        sub_entry["validation_text"] = sub_q["question"]
+                    answers.append(sub_entry)
 
     elif "answers" in data:
         # Legacy format: {"answers": [...]}
@@ -365,6 +366,71 @@ def replace_answer(
     logger.info(f"Replaced answer at index {start}-{end}")
 
 
+def validate_questions(
+    service,
+    doc_id: str,
+    answers: list[dict]
+) -> dict:
+    """
+    Validate input questions against document structure.
+
+    Returns dict with:
+    - doc_ids: set of outline IDs found in document
+    - input_ids: set of outline IDs from input
+    - missing_in_doc: questions in input but not in document
+    - missing_in_input: questions in document but not in input
+    - text_mismatches: questions where text doesn't match
+    """
+    paragraphs = get_document_structure(service, doc_id)
+
+    # Only consider bullet paragraphs
+    doc_bullets = {p["outline_id"]: p for p in paragraphs if p["is_bullet"]}
+    doc_ids = set(doc_bullets.keys())
+
+    input_ids = {a["outline_id"] for a in answers if a.get("outline_id")}
+
+    missing_in_doc = []
+    missing_in_input = []
+    text_mismatches = []
+
+    # Check input questions against doc
+    for answer in answers:
+        oid = answer.get("outline_id")
+        if not oid:
+            continue
+
+        if oid not in doc_ids:
+            missing_in_doc.append({
+                "outline_id": oid,
+                "validation_text": answer.get("validation_text")
+            })
+        elif answer.get("validation_text"):
+            doc_text = doc_bullets[oid]["text"]
+            expected = answer["validation_text"]
+            if expected.lower() not in doc_text.lower():
+                text_mismatches.append({
+                    "outline_id": oid,
+                    "expected": expected,
+                    "found": doc_text
+                })
+
+    # Check doc questions not in input
+    for oid in doc_ids:
+        if oid not in input_ids:
+            missing_in_input.append({
+                "outline_id": oid,
+                "doc_text": doc_bullets[oid]["text"]
+            })
+
+    return {
+        "doc_ids": doc_ids,
+        "input_ids": input_ids,
+        "missing_in_doc": missing_in_doc,
+        "missing_in_input": missing_in_input,
+        "text_mismatches": text_mismatches
+    }
+
+
 def process_answers(
     service,
     doc_id: str,
@@ -472,6 +538,102 @@ def process_answers(
     return results
 
 
+def run_form_filler(
+    service,
+    doc_id: str,
+    answers: list[dict],
+    dry_run: bool = False
+) -> dict:
+    """
+    Core function that validates and processes answers.
+
+    Args:
+        service: Google Docs service
+        doc_id: Document ID
+        answers: Flattened list of answer dicts
+        dry_run: If True, don't make changes
+
+    Returns:
+        Dict with validation and processing results
+    """
+    # Validate input against document structure
+    validation = validate_questions(service, doc_id, answers)
+
+    # Process answers
+    results = process_answers(service, doc_id, answers, dry_run=dry_run)
+
+    # Build combined results
+    return {
+        "validation": {
+            "doc_question_count": len(validation["doc_ids"]),
+            "input_question_count": len(validation["input_ids"]),
+            "doc_ids": sorted(validation["doc_ids"]),
+            "input_ids": sorted(validation["input_ids"]),
+            "missing_in_doc": validation["missing_in_doc"],
+            "missing_in_input": validation["missing_in_input"],
+            "text_mismatches": validation["text_mismatches"]
+        },
+        "processing": {
+            "processed": results["processed"],
+            "skipped": results["skipped"],
+            "mismatches": results["mismatches"],
+            "errors": results["errors"]
+        }
+    }
+
+
+def print_results(results: dict) -> None:
+    """Print results in human-readable format."""
+    v = results["validation"]
+    p = results["processing"]
+
+    # Validation warnings (to stderr via logger)
+    if v["missing_in_doc"]:
+        logger.warning("Input questions not found in document:")
+        for item in v["missing_in_doc"]:
+            text = item.get("validation_text", "")
+            logger.warning(f"  {item['outline_id']}: {text[:50] if text else '(no text)'}")
+
+    if v["missing_in_input"]:
+        logger.warning("Document questions not in input:")
+        for item in v["missing_in_input"]:
+            logger.warning(f"  {item['outline_id']}: {item['doc_text'][:50]}...")
+
+    if v["text_mismatches"]:
+        logger.warning("Question text mismatches:")
+        for item in v["text_mismatches"]:
+            logger.warning(f"  {item['outline_id']}:")
+            logger.warning(f"    expected: {item['expected'][:40]}...")
+            logger.warning(f"    found:    {item['found'][:40]}...")
+
+    # Summary to stdout
+    print("\n=== Validation Summary ===")
+    print(f"Document questions: {v['doc_question_count']}")
+    print(f"Input questions: {v['input_question_count']}")
+    print(f"Missing in doc: {len(v['missing_in_doc'])}")
+    print(f"Missing in input: {len(v['missing_in_input'])}")
+    print(f"Text mismatches: {len(v['text_mismatches'])}")
+
+    print("\n=== Processing Results ===")
+    print(f"Processed: {len(p['processed'])}")
+    print(f"Skipped: {len(p['skipped'])}")
+    print(f"Answer mismatches: {len(p['mismatches'])}")
+    print(f"Errors: {len(p['errors'])}")
+
+    if p["mismatches"]:
+        print("\n=== Mismatches ===")
+        for m in p["mismatches"]:
+            print(f"\nOutline {m['outline_id']}:")
+            print(f"  Question: {m['question']}")
+            print(f"  Existing: {m['existing'][:100]}...")
+            print(f"  New: {m['new'][:100]}...")
+
+    if p["errors"]:
+        print("\n=== Errors ===")
+        for e in p["errors"]:
+            print(f"  {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Fill answers into a Google Doc form"
@@ -493,6 +655,11 @@ def main():
         "--dry-run",
         action="store_true",
         help="Show what would be done without making changes"
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results as JSON instead of formatted text"
     )
     parser.add_argument(
         "--dump-structure",
@@ -526,33 +693,24 @@ def main():
         # Convert nested format to flat list for processing
         answers = flatten_questions(data)
 
-        results = process_answers(
-            service,
-            args.doc_id,
-            answers,
-            dry_run=args.dry_run
-        )
+        # Run validation and processing
+        results = run_form_filler(service, args.doc_id, answers, dry_run=args.dry_run)
 
-        print("\n=== Processing Results ===")
-        print(f"Processed: {len(results['processed'])}")
-        print(f"Skipped: {len(results['skipped'])}")
-        print(f"Mismatches: {len(results['mismatches'])}")
-        print(f"Errors: {len(results['errors'])}")
+        # Save results to timestamped JSON file
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H%M")
+        output_file = f"processed_{timestamp}.json"
+        with open(output_file, 'w') as f:
+            json.dump(results, f, indent=2)
+            f.write('\n')
+        logger.info(f"Results saved to {output_file}")
 
-        if results["mismatches"]:
-            print("\n=== Mismatches ===")
-            for m in results["mismatches"]:
-                print(f"\nOutline {m['outline_id']}:")
-                print(f"  Question: {m['question']}")
-                print(f"  Existing: {m['existing'][:100]}...")
-                print(f"  New: {m['new'][:100]}...")
+        # Output results
+        if args.json:
+            print(json.dumps(results, indent=2))
+        else:
+            print_results(results)
 
-        if results["errors"]:
-            print("\n=== Errors ===")
-            for e in results["errors"]:
-                print(f"  {e}")
-
-        return 0 if not results["errors"] else 1
+        return 0 if not results["processing"]["errors"] else 1
 
     except HttpError as e:
         logger.error(f"Google API error: {e}")
