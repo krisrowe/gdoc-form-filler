@@ -164,82 +164,95 @@ Then extract to shared package for reuse across projects.
 
 ---
 
-## Priority: Confirmed Bugs
+## Future: Test Structure Refactor
 
-### 1. Document structure corruption after first insert
+### Current State
 
-**Behavior observed:**
-- After `process_answers` inserts the first answer into the document, subsequent operations fail
-- Outline ID lookups return wrong paragraphs (e.g., looking for outline "4" returns question 3's text "Contact Information")
-- Sub-bullet outline_ids (3a, 3b, 3c) disappear from the parsed structure entirely
-- Validation text no longer matches expected paragraphs
-- The function re-fetches document structure after each edit via `get_document_structure()`, but the returned structure is corrupted
+Single `test.py` at project root runs integration tests sequentially via `run_tests()` function.
 
-**Root cause analysis:**
-The issue is in `find_question_paragraph()` at `form_filler.py:269`. After an insert, we re-fetch the document and search for the outline_id. However:
-1. `get_document_structure()` computes outline_ids based on bullet nesting and sequence
-2. When we insert a non-bullet answer paragraph, it doesn't affect bullet numbering
-3. BUT the `paragraphs` list now contains additional entries (the inserted answers)
-4. `determine_insertion_point()` uses `paragraphs.index(question_para)` to find position
-5. This index is into the NEW paragraphs list, which has different positions than before
+### Proposed Structure
 
-**Proposed fix:**
-Option A: Only track bullet paragraphs in the list used for index arithmetic, keep non-bullets separate
-Option B: Use `start_index`/`end_index` (character positions) instead of list indices for insertion point calculation
-Option C: Store the question's character `end_index` at lookup time, use that directly for insertion
-
-### 2. Answer inserted at end of document instead of after question
-
-**Behavior observed:**
-- Running `make test` results in answer text appearing at the very end of the document
-- The answer appears below the "Conclusion" paragraph instead of after its question
-- Answer has blue color applied (so `insert_answer` ran), but at wrong location
-- Specifically observed: "THIS SHOULD BE BLUE" at document end (from debug/test session)
-
-**Root cause analysis:**
-In `determine_insertion_point()` at `form_filler.py:282-317`:
-
-```python
-q_idx = paragraphs.index(question_para)  # Line 294
-# ...
-next_para = paragraphs[q_idx + 1]  # Line 302
+```
+tests/
+  ├── integration/
+  │   ├── conftest.py          # Shared fixtures (docs_service, test_doc)
+  │   ├── test_native_bullets.py
+  │   └── test_text_based.py   # When text-based support is added
+  └── unit/                    # Future unit tests
+      └── test_outline_parsing.py
 ```
 
-The code finds the question in the `paragraphs` list, then looks at `q_idx + 1` to check the "next" paragraph. Problems:
+### pytest Approach for Integration Tests
 
-1. `paragraphs` contains ALL paragraphs (intro, bullets, answers, conclusion)
-2. After inserting answer for question 1, the list has a new paragraph between Q1 and Q2
-3. When processing question 2, `q_idx + 1` might now point to the answer we just inserted for Q1
-4. The logic then incorrectly determines insertion point based on this wrong "next" paragraph
-5. In worst case, the calculated `insert_idx` points to end of document
-
-**Related to:** Bug #1 - both stem from using list indices that become stale after document modifications.
-
-**Proposed fix:**
-Same as Bug #1 - use character indices (`start_index`/`end_index`) from the API rather than list position arithmetic. The character indices are absolute positions in the document that remain valid references even after we re-fetch structure.
-
-### 3. Test doesn't set CONFIG["answer_color"]
-
-**Behavior observed:**
-- Test 5 in `test.py` calls `process_answers()` directly
-- Answers are inserted but without color styling
-- The `answer_color` config is never applied during tests
-
-**Root cause analysis:**
-- `form_filler.CONFIG` is a module-level dict initialized with `{"answer_color": None}`
-- `CONFIG["answer_color"]` is only populated in `main()` when loading `config.yaml`
-- `test.py` imports `process_answers` and calls it directly, bypassing `main()`
-- Therefore `CONFIG["answer_color"]` remains `None` and no color is applied
-
-**Fix:**
-In `test.py`, before calling `process_answers()`, set the config:
+Use class-based tests with module-scoped fixtures to share document state:
 
 ```python
-import form_filler
-form_filler.CONFIG["answer_color"] = "blue"
+# tests/integration/conftest.py
+import pytest
+
+@pytest.fixture(scope="module")
+def docs_service():
+    # Load credentials, build service
+    ...
+
+@pytest.fixture(scope="module")
+def test_doc(docs_service):
+    doc_id = get_or_create_test_doc(docs_service)
+    clear_document(docs_service, doc_id)
+    create_test_content(docs_service, doc_id, outline_type="native_bullets")
+    yield doc_id
+
+
+# tests/integration/test_native_bullets.py
+class TestNativeBullets:
+    """Integration tests for native Google Docs bullet outlines."""
+
+    def test_1_parse_structure(self, docs_service, test_doc):
+        paragraphs = get_document_structure(docs_service, test_doc)
+        assert len(paragraphs) == 8
+
+    def test_2_analyze_questions(self, docs_service, test_doc):
+        ...
+
+    def test_3_check_outline_ids(self, docs_service, test_doc):
+        ...
+
+    def test_4_validate_questions(self, docs_service, test_doc):
+        ...
+
+    def test_5_process_answers(self, docs_service, test_doc):
+        ...
 ```
 
-Alternatively, have `test.py` load `config.yaml` the same way `main()` does, but explicit setting is cleaner for tests.
+Tests run in order (alphabetically by method name). Shared `test_doc` fixture provides same document to all tests in the module.
+
+### When to Refactor
+
+- After text-based outline support is added (need two test modules)
+- When adding unit tests for isolated functions
+- If test complexity grows beyond current single-file approach
+
+---
+
+## Resolved Bugs
+
+### ~~1. Document structure corruption after first insert~~ ✓ FIXED
+
+**Fix applied:** Changed `determine_insertion_point()` to use character indices (`start_index`/`end_index`) instead of list positions. Commit 99d902a.
+
+### ~~2. Answer inserted at end of document instead of after question~~ ✓ FIXED
+
+**Fix applied:** Same as Bug #1 - use character indices instead of `paragraphs.index()` and list indexing. Commit 99d902a.
+
+### ~~3. Test doesn't set CONFIG["answer_color"]~~ ✓ FIXED
+
+**Fix applied:** Added `form_filler.CONFIG["answer_color"] = "blue"` in test.py. Commit 99d902a.
+
+---
+
+## Open Bugs
+
+(None currently - see Resolved Bugs above for historical issues)
 
 ---
 
