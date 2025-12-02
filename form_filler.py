@@ -26,6 +26,8 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from docs_api import batch_update
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -395,10 +397,7 @@ def insert_answer(
             }
         })
 
-    service.documents().batchUpdate(
-        documentId=doc_id,
-        body={"requests": requests}
-    ).execute()
+    batch_update(service, doc_id, requests)
     logger.debug(f"Inserted answer at index {index}")
 
 
@@ -428,10 +427,7 @@ def replace_answer(
             }
         }
     ]
-    service.documents().batchUpdate(
-        documentId=doc_id,
-        body={"requests": requests}
-    ).execute()
+    batch_update(service, doc_id, requests)
     logger.debug(f"Replaced answer at index {start}-{end}")
 
 
