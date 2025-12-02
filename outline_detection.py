@@ -13,13 +13,14 @@ from typing import Optional
 
 # Text-based outline patterns
 # Order matters - more specific patterns first
+# Note: \s* before period handles templates with "25 . a)" format
 TEXT_PATTERNS = [
-    # Combined: "1. a)" or "1.a)" - parent + sub-item
-    (r'^(\d+)\.\s*([a-z])\)\s*', 'combined'),
+    # Combined: "1. a)" or "1.a)" or "1 . a)" - parent + sub-item
+    (r'^(\d+)\s*\.\s*([a-z])\)\s*', 'combined'),
     # Combined: "1a." - parent + sub-item
     (r'^(\d+)([a-z])\.\s*', 'combined_dot'),
-    # Numbered with period: "1. ", "2. "
-    (r'^(\d+)\.\s+', 'number'),
+    # Numbered with period: "1. ", "2. ", "1 . "
+    (r'^(\d+)\s*\.\s+', 'number'),
     # Numbered with paren: "1)", "2)"
     (r'^(\d+)\)\s*', 'number_paren'),
     # Lettered with paren: "a) ", "b) "
