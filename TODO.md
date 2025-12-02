@@ -599,3 +599,53 @@ load_dotenv("safe.env")
 ```
 
 This would eliminate false positives while preserving the same functionality.
+
+## Refactor: Single Loop Over Union of Outline IDs
+
+### Problem
+
+The current `process_answers()` function uses two separate loops:
+
+1. **Loop 1**: Iterates over `answers` list only
+   - Handles: skipped, not_found, no_change, would_insert, would_replace
+   - Progress shows `X/180` (answers count only)
+
+2. **Loop 2**: Iterates over `doc_ids - input_ids` (doc questions missing from input)
+   - Handles: not_in_input
+   - No progress indicator
+
+This causes:
+- Progress bar counts only answers, not the union (180 vs 185)
+- `not_in_input` items appear at the end, out of outline order
+- Two separate code paths with different logic
+
+### Solution
+
+Refactor to use a single loop over the union of all outline IDs:
+
+```python
+# Build union of all outline IDs
+input_map = {a["outline_id"]: a for a in answers if a.get("outline_id")}
+doc_map = {p["outline_id"]: p for p in paragraphs if p.get("outline_id")}
+all_ids = sorted(set(input_map.keys()) | set(doc_map.keys()), key=outline_sort_key)
+
+for i, oid in enumerate(all_ids, 1):
+    print(f"\rProcessing {i}/{len(all_ids)}: {oid}...", end="", flush=True)
+
+    in_input = oid in input_map
+    in_doc = oid in doc_map
+
+    if in_input and in_doc:
+        # normal processing (insert/replace/no_change)
+    elif in_input and not in_doc:
+        # not_found
+    elif not in_input and in_doc:
+        # not_in_input
+```
+
+### Benefits
+
+- Accurate progress indicator (`X/185` instead of `X/180`)
+- Results in proper outline order (1, 1a, 1b, 2, 3a, 3b...)
+- Single unified loop with consistent logic
+- Easier to maintain and extend
