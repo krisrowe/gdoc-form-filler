@@ -69,6 +69,26 @@ When running `devws precommit`, you may see false positive warnings like:
 
 This is a false positive because `./user_token.json` is just a generic file path in documentation/examples, not an actual secret. **Safe to ignore this specific warning only.** Do not ignore other devws precommit findings without investigation.
 
+## User Data Protection
+
+**NEVER use any content from user data sources in versioned files.** This includes:
+
+- Target Google Docs (questions, answers, headings, any paragraph text)
+- CSV/JSON input files containing questions and answers
+- Any content from user documents, including:
+  - Generic-looking headings or section titles
+  - Introductory or concluding paragraph text
+  - Example questions or answers
+
+This rule applies to:
+- Commit messages
+- Code and code comments
+- Test modules and test data
+- Documentation and examples
+- Any file tracked in version control
+
+When examples are needed, create fictional/placeholder content that clearly could not come from actual user data.
+
 ## Project Architecture
 
 See `CONTRIBUTING.md` for implementation details and `TODO.md` for planned changes.

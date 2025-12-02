@@ -225,6 +225,32 @@ def find_question_paragraph(
     return None
 
 
+# Pattern to detect text that starts a new question or section heading
+# Matches: "A.", "B.", "1.", "2.", "a)", "b)", "1)", "i.", "ii.", "1. a)", etc.
+QUESTION_START_PATTERN = re.compile(r'^[A-Za-z0-9]{1,3}[.)]\s')
+
+
+def starts_new_question_or_section(para: dict) -> bool:
+    """
+    Check if a paragraph starts a new question or section heading.
+
+    Returns True if the paragraph is either:
+    - A detected bullet/outline item, OR
+    - Text that starts with a pattern like "A.", "1.", "a)", etc.
+
+    Used to determine where answers end.
+    """
+    if para.get("is_bullet"):
+        return True
+    text = para.get("text", "").strip()
+    if QUESTION_START_PATTERN.match(text):
+        logger.debug(
+            f"Found non-bullet question/section start: '{text[:30]}...' (len {len(text)})"
+        )
+        return True
+    return False
+
+
 def determine_insertion_point(
     paragraphs: list[dict],
     question_para: dict
@@ -257,14 +283,14 @@ def determine_insertion_point(
     if next_para is None:
         return q_end, None, False
 
-    # If next paragraph is a bullet, insert between question and next bullet
-    if next_para["is_bullet"]:
+    # If next paragraph starts a new question/section, insert between them
+    if starts_new_question_or_section(next_para):
         return q_end, None, False
 
-    # Next paragraph is not a bullet - check if it's an existing answer
+    # Next paragraph doesn't start a new question - check if it's an existing answer
     # We consider it an answer if:
     # 1. It's indented more than the question (traditional detection), OR
-    # 2. There's another bullet/outline paragraph after it (meaning this non-bullet
+    # 2. There's another question/section after it (meaning this paragraph
     #    is sandwiched between questions, so it must be an answer)
     #
     # This handles:
@@ -277,10 +303,10 @@ def determine_insertion_point(
         # Indented under question - definitely an answer
         return next_para["start_index"], next_para, False
 
-    # Check if there's another bullet after this non-bullet paragraph
+    # Check if there's another question/section after this paragraph
     # If so, this paragraph is between two questions and is likely an answer
     for p in paragraphs:
-        if p["start_index"] > next_para["end_index"] and p["is_bullet"]:
+        if p["start_index"] > next_para["end_index"] and starts_new_question_or_section(p):
             # Found a bullet after the non-bullet - treat non-bullet as answer
             return next_para["start_index"], next_para, False
 
@@ -501,11 +527,18 @@ def process_answers(
             - Additional context fields as needed
     """
     results = []
+    total = len(answers)
 
-    for answer_entry in answers:
+    # Fetch document structure once upfront
+    paragraphs = get_document_structure(service, doc_id)
+
+    for i, answer_entry in enumerate(answers, 1):
         outline_id = answer_entry.get("outline_id")
         validation_text = answer_entry.get("validation_text")
         answer_text = answer_entry.get("answer")
+
+        # Show progress
+        print(f"\rProcessing {i}/{total}: {outline_id or '?'}...", end="", flush=True)
 
         # Build result entry for this question
         entry = {"outline_id": outline_id}
@@ -525,8 +558,10 @@ def process_answers(
             results.append(entry)
             continue
 
-        # Re-fetch document structure each time (indices change after edits)
-        paragraphs = get_document_structure(service, doc_id)
+        # Re-fetch document structure after edits (indices change)
+        # Skip re-fetch in dry-run mode since no changes are made
+        if not dry_run:
+            paragraphs = get_document_structure(service, doc_id)
 
         # Find the question
         question_para = find_question_paragraph(
@@ -592,6 +627,9 @@ def process_answers(
 
         entry["actions"] = actions
         results.append(entry)
+
+    # Clear progress line
+    print("\r" + " " * 50 + "\r", end="", flush=True)
 
     # Now report on document questions that weren't in the input
     # Get all doc outline IDs and input outline IDs

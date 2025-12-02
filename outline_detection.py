@@ -46,7 +46,7 @@ def parse_text_outline(text: str) -> Optional[dict]:
     text = text.strip()
 
     for pattern, pattern_type in TEXT_PATTERNS:
-        match = re.match(pattern, text, re.IGNORECASE)
+        match = re.match(pattern, text)
         if match:
             groups = match.groups()
             text_after = text[match.end():]
