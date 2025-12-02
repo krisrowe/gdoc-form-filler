@@ -263,6 +263,41 @@ Identify additional functions that can be tested without network I/O:
 
 Goal: Move as much logic as possible to unit tests for faster feedback.
 
+### form_filler.py main() vs pytest Coverage Gap
+
+Analysis of what `form_filler.py main()` does end-to-end vs what pytest tests cover:
+
+**form_filler.py main() pipeline:**
+| Step | Description | Covered in pytest? |
+|------|-------------|-------------------|
+| 1 | Parse CLI args | No (tests call functions directly) |
+| 2 | Load config.yaml | No |
+| 3 | Load credentials | Yes (conftest.py fixture) |
+| 4 | Build Docs service | Yes (conftest.py fixture) |
+| 5 | Load answers JSON | No (tests use dict directly) |
+| 6 | Flatten questions | Yes |
+| 7 | Run form filler | Partially (validate + process called separately) |
+| 8 | Generate output filename | **No** |
+| 9 | Save results to JSON | **No** |
+| 10 | Print results | No |
+| 11 | Generate Markdown report | **No** (only unit tests with mock data) |
+| 12 | Return exit code | No |
+
+**Gaps to address:**
+1. `run_form_filler()` is never called directly - tests call `validate_questions()` and `process_answers()` separately
+2. JSON output generation not tested in integration
+3. Report generation only tested with mock data in unit tests, not with real processing results
+
+**What IS well-covered:**
+- Core functionality: document parsing, validation, answer processing
+- All status scenarios: no_change, would_replace, inserted, skipped, not_found, not_in_input
+- Both outline types: native_bullets and text_based
+
+**Recommendations:**
+1. Add integration test calling `run_form_filler()` to verify combined output
+2. Consider adding test that writes JSON and generates MD report (could be mocked integration)
+3. Unit tests could verify `generate_report()` with actual `run_form_filler()` output structure
+
 ### Future: Mocked Integration Tests
 
 Add `tests/mocked/` for end-to-end workflow tests using mocked Google API responses:
