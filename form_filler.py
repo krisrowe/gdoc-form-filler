@@ -198,6 +198,15 @@ def get_document_structure(service, doc_id: str, outline_mode: str = 'auto') -> 
     return parse_document_structure(content, mode=outline_mode)
 
 
+def normalize_quotes(text: str) -> str:
+    """Normalize smart quotes/apostrophes to straight quotes for comparison."""
+    return (text
+        .replace("\u2019", "'")  # right single quote -> straight
+        .replace("\u2018", "'")  # left single quote -> straight
+        .replace("\u201c", '"')  # left double quote -> straight
+        .replace("\u201d", '"')) # right double quote -> straight
+
+
 def find_question_paragraph(
     paragraphs: list[dict],
     outline_id: str,
@@ -217,7 +226,10 @@ def find_question_paragraph(
     for para in paragraphs:
         if para.get("outline_id") == outline_id:
             if validation_text:
-                if validation_text.lower() not in para["text"].lower():
+                # Normalize quotes for comparison (smart quotes vs straight quotes)
+                normalized_validation = normalize_quotes(validation_text.lower())
+                normalized_para = normalize_quotes(para["text"].lower())
+                if normalized_validation not in normalized_para:
                     logger.warning(
                         f"Outline {outline_id} found but validation text "
                         f"'{validation_text}' not in paragraph: {para['text'][:50]}..."

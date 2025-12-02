@@ -1,19 +1,17 @@
-# Credentials - never commit these
+# Credentials - never commit or backup (sensitive/recreatable)
 user_token.json
+user_*.*
 credentials.json
 client_secrets.json
 *.token.json
 
-# Data files (use *.example for templates)
-*.json
-*.csv
-*.yaml
-*.tmp
-.test_doc_id
-!*.example
-
-# Output reports
+# Output reports (recreatable)
 processed_*.md
+processed_*.json
+
+# Test artifacts
+.test_doc_id
+*.tmp
 
 # Python
 __pycache__/
@@ -36,5 +34,9 @@ env/
 .DS_Store
 Thumbs.db
 
-# User-specific files
-user-*.md
+# Claude Code local settings
+.claude/
+
+# user-files
+config.yaml
+user-*.*
