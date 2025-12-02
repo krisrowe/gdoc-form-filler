@@ -8,6 +8,7 @@ client_secrets.json
 # Output reports (recreatable)
 processed_*.md
 processed_*.json
+*.zip
 
 # Test artifacts
 .test_doc_id
