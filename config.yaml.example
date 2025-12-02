@@ -10,10 +10,10 @@
 doc_id: YOUR_DOCUMENT_ID_HERE
 
 # Path to questions/answers JSON file
-questions_file: answers.json
+questions_file: user-answers.json
 
 # Path to CSV file for conversion
-csv_file: answers.csv
+csv_file: user-answers.csv
 
 # Optional: Color for inserted answers (omit or leave blank for default/black)
 # Supported colors: blue, red, green, yellow, cyan, magenta, orange, purple

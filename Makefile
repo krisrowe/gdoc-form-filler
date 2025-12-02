@@ -9,8 +9,8 @@ QUESTIONS_FILE := $(shell grep '^questions_file:' $(CONFIG) 2>/dev/null | awk '{
 CSV_FILE := $(shell grep '^csv_file:' $(CONFIG) 2>/dev/null | awk '{print $$2}')
 
 # Defaults if not in config
-QUESTIONS_FILE := $(or $(QUESTIONS_FILE),answers.json)
-CSV_FILE := $(or $(CSV_FILE),answers.csv)
+QUESTIONS_FILE := $(or $(QUESTIONS_FILE),user-answers.json)
+CSV_FILE := $(or $(CSV_FILE),user-answers.csv)
 
 help:
 	@echo "gdoc-form-filler commands:"
